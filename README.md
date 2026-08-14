@@ -1,40 +1,274 @@
+<div align="center">
+
 # claude-micro
 
-Turns a [Work Louder Codex Micro](https://worklouder.cc/) into a physical
-control deck for [Claude Code](https://claude.com/claude-code) running in
-tmux: keys jump between sessions and light up with each session's state, the
-knob drives permission modes and the model picker, action keys answer
-permission dialogs and fire canned workflows, and the joystick navigates
-dialogs -- or, swirled all the way around, opens a hidden game.
+**Turn a [Work Louder Codex Micro](https://worklouder.cc/) into a physical control deck for [Claude Code](https://claude.com/claude-code).**
 
-## Requirements
+Keys jump between tmux sessions and glow with each session's live state.
+The knob drives permission modes and the model picker. Action keys answer
+permission dialogs and fire your workflows. The joystick navigates menus —
+or, swirled all the way around, opens a hidden game.
 
-- macOS, a Codex Micro, tmux, Node 18+, Claude Code
-- ChatGPT.app installed -- the device SDK is extracted from it locally at
-  install time (it is proprietary and not distributed here)
+```
+        ╭─────────────────────────────────────────────╮
+        │    ①   ②   ③   ④   ⑤   ⑥     ← agent row    │
+        │   ▁▁  ▁▁  ▁▁  ▁▁  ▁▁  ▁▁       (RGB per key) │
+        │                                             │
+        │    ⑦   ⑧   ⑨   ⑩   ⑪   ⑫   ⑬  ← action row   │
+        │                                             │
+        │    ◉ knob                joystick ✛         │
+        ╰─────────────────────────────────────────────╯
+                   (schematic, not to scale)
+```
 
-## Install
+`macOS` · `Node ≥ 18` · `tmux` · `zero runtime dependencies`
 
-    git clone https://github.com/pidoshva/claude-micro.git
-    cd claude-micro && ./install.sh
+</div>
+
+---
+
+## Contents
+
+- [What it does](#what-it-does)
+- [Quick start](#quick-start)
+- [The controls](#the-controls) — [agent keys](#agent-keys-16-jump-zoom-glow) · [action keys](#action-keys-713) · [the knob](#the-knob) · [the joystick & game](#the-joystick--the-game)
+- [Status lights](#status-lights)
+- [The configurator: `claude-micro`](#the-configurator-claude-micro)
+- [Guide: wiring skills and actions](#guide-wiring-skills-and-actions)
+- [Guide: connecting your tmux setup](#guide-connecting-your-tmux-setup)
+- [Companion skills](#companion-skills)
+- [How it works](#how-it-works)
+- [Field notes](#field-notes) — the hard-won gotchas
+- [Configuration reference](#configuration-reference)
+- [Limits](#limits)
+
+## What it does
+
+You run several Claude Code sessions in tmux panes. This makes the Micro
+their mission control:
+
+| Control | Out of the box |
+|---|---|
+| **1 – 4** | jump to a tmux pane · double-press zooms it full-window |
+| **5** | `/code-review` the focused session (typed text becomes the target) |
+| **6** | `/btw` — structured standup update from the focused session |
+| **7** | `/research` — deep architectural dive on the session's active topic |
+| **8** | **approve** the visible permission dialog |
+| **9** | **deny** it |
+| **10** | `/ship` — commit, push, open a concise PR |
+| **11 – 13** | yours to assign |
+| **knob turn** | cycle permission modes, both directions |
+| **knob click** | model picker: click to open, turn to choose, click to apply |
+| **joystick** | d-pad in dialogs · full swirl opens [the game](#the-joystick--the-game) |
+
+Every key is reassignable — see [the configurator](#the-configurator-claude-micro).
+The lights tell you who needs you: a key **breathing orange** is a session
+waiting on a permission prompt; **green** finished while you were elsewhere;
+**blue** is working. Press it, read, flick the joystick to an option, thumb
+approve — without touching the keyboard.
+
+## Quick start
+
+**Requirements:** macOS · a Codex Micro · tmux · Node 18+ · Claude Code ·
+ChatGPT.app installed (the device SDK is extracted from it locally — it is
+proprietary and never ships in this repo).
+
+```bash
+git clone https://github.com/pidoshva/claude-micro.git
+cd claude-micro && ./install.sh
+```
 
 The installer copies everything into `~/.claude/micro`, installs the
-companion skills (`/btw`, `/research`, `/ship`) into `~/.claude/skills`,
-wires the Claude Code hooks (additive, backed up), builds the app bundle you
-grant Input Monitoring to, and loads the LaunchAgent. Two manual steps remain
-after it runs -- granting Input Monitoring and unassigning the daemon's keys
-in the ChatGPT app -- and the installer prints both.
+[companion skills](#companion-skills) into `~/.claude/skills`, wires the
+Claude Code hooks (additive, backed up first), builds the app bundle you
+grant Input Monitoring to, puts `claude-micro` on your PATH, and loads the
+LaunchAgent. Per-machine settings live in `~/.claude/micro/config.json` —
+created once, never overwritten by reinstalls, hot-reloaded by the daemon.
 
-Per-machine settings live in `~/.claude/micro/config.json` (created from
-`config.example.json`, never overwritten by reinstalls, hot-reloaded by the
-daemon).
+**Two manual steps remain** — macOS will not let a script do them:
+
+1. **Grant Input Monitoring**: System Settings → Privacy & Security →
+   Input Monitoring → add `~/.claude/micro/ClaudeMicro.app`, then
+   `launchctl kickstart -k gui/$UID/com.claude-micro`.
+
+   <details><summary>Why an app bundle?</summary>
+
+   Opening a HID keyboard interface requires Input Monitoring. A launchd
+   process holds no grant and cannot prompt for one — the same code works
+   from a terminal only because the terminal already has the grant and
+   children inherit it. `ClaudeMicro.app` exists to be *the thing you
+   grant*: its executable is a hard link to your `node` binary, scoping the
+   grant to this daemon instead of to every script node will ever run.
+   `make-app.sh` rebuilds it; re-granting is only needed if it's rebuilt
+   from a different node.
+   </details>
+
+2. **In the ChatGPT app**: Settings → Codex Micro → leave every key the
+   daemon owns **unassigned**. The app repaints keys it thinks it owns and
+   will fight the daemon for them; unassigned keys are painted off and left
+   alone.
+
+Then run `claude-micro` and make the board yours.
+
+## The controls
+
+### Agent keys 1–6: jump, zoom, glow
+
+Press a key → your tmux client switches to that pane, the terminal window is
+raised in front of whatever you were looking at, and the pane's unread light
+clears. The pane is typed-into the moment the key is up.
+
+- **Double-press** (within 600ms) zooms the pane full-window; again restores.
+  It's `tmux resize-pane -Z`, so the daemon holds no zoom state and can't
+  disagree with tmux about what's zoomed.
+- Which terminal app to raise is discovered by walking the tmux client's
+  process tree to the nearest `.app` bundle. Set `focusApp` if the walk
+  can't reach yours (a client behind ssh), or `focusTerminal: false` to
+  leave macOS focus alone.
+- The pane you're in shows full-brightness while the others dim — "where am
+  I" at a glance. The **whole device** (key backlight + ambient ring) also
+  washes in the focused session's status color; `working` animates, the rest
+  sit solid. Tune with `glowBrightness`, restrict with `glowStatuses`, or
+  disable with `glow: false`.
+
+### Action keys 7–13
+
+No per-key LEDs — their feedback is what happens in the pane, plus a log
+line. Each can carry any [action type](#the-action-types); unassigned keys
+report their name on first press so you can find them.
+
+The two special ones ship on 8 and 9:
+
+- **Approve** sends **Enter** — accepting the dialog's *highlighted* option:
+  "1. Yes" untouched, or whatever the joystick was flicked to.
+- **Deny** sends **Esc** — the dialog's documented cancel.
+
+Both refuse unless a dialog is actually on screen, so they can never type
+stray characters into a message or interrupt a running turn. Their cooldown
+is short (700ms) because permission prompts arrive in trains.
+
+### The knob
+
+The knob acts on the pane you're in — press a key to get somewhere, turn to
+change how the session there behaves.
+
+| Gesture | Effect | Sends |
+|---|---|---|
+| Turn | cycle permission modes, both directions | `BTab` |
+| Press | open the model picker | `M-p` |
+| Turn, list open | move through models | `Up` / `Down` |
+| Press again | apply to **this session** | `s` |
+
+<details><summary>Why anticlockwise is "a lap minus one", and why apply is <code>s</code></summary>
+
+Shift+Tab only cycles forward and Claude Code has no reverse binding, so
+going back means going forward `modeCycle − 1` times. That number must match
+your build — measure it by pressing Shift+Tab round to where you started
+(default `4`: manual → accept edits → plan → auto). Get it wrong and "back"
+skips instead of reversing.
+
+The model picker offers two confirms: `Enter` sets your **global default
+model** for every future session; `s` applies to the session in front of
+you. A knob acting on the pane you're in shouldn't silently rewrite a global
+setting — set `"confirm": "default"` for the other behavior.
+</details>
+
+<details><summary>Encoder facts: names, click bursts, rotation smoothing</summary>
+
+This firmware reports rotation as one name per direction (`ENC_CW` /
+`ENC_CC`, `act: 2`) and the click as `ENC_CLK`. Unrecognized controls are
+logged once with their full payload — that line is what you paste into
+`knobs.left` in the config. One physical **click arrives as a burst of ~8
+notifications inside 100ms**, so clicks are debounced (`knobClickMs`, 300ms).
+
+Rotation smoothing: `turnWindowMs` (80) applies detents as a net figure so
+jitter cancels instead of becoming two actions; `turnSteps` gears
+detents-per-action — on this hardware one physical click emits exactly one
+event, so `1` is right and higher gearing makes it *skip*; `turnIdleMs`
+decays a leftover part-step so a stray detent can't ambush a later turn.
+</details>
+
+### The joystick — the game
+
+Flicks are quantized to quadrants (up / down / left / right), and what a
+flick *means* depends on what's on screen in the focused session:
+
+- **A dialog is up** (permission prompt, model picker, any selection menu):
+  the stick is a **d-pad** — each flick lands as that arrow key.
+- **No dialog**: flicks feed the game gesture. One **continuous swirl
+  through all four directions** — the agent keys fill a quarter per
+  direction visited — opens **micro-drift** in a new tmux window: an arrow
+  adrift in space, steered by the joystick, dodging asteroids that get
+  faster and more numerous. Collide and the run ends — explosion, score, the
+  window closes itself, and tmux drops you back where you were. Arrow keys
+  also steer; `q`/Esc quits.
+
+The all-four-directions swirl is the validation gesture: menu flicks or
+knocking the stick can hit one or two quadrants, never all four in one
+motion — the game can't open uninvited.
+
+<details><summary>Game internals</summary>
+
+The daemon serves the game over localhost and streams joystick positions to
+it via SSE (`{a, d}`: angle as a fraction of a full turn, distance from
+center — the `v.oai.rad` channel, the device SDK's own convention). The
+terminal edition (`game/drift.js`) uses **diffed rendering** — only changed
+cells are written, a frame is a few hundred bytes, ~1000× less terminal
+traffic than repainting — at 60fps with a backpressure guard so a slow
+terminal skips frames instead of accumulating lag. Terminal cells are ~2×
+taller than wide; collision and motion compensate so space feels square.
+While a game runs the daemon goes **radio-quiet** (see
+[field notes](#field-notes)). `joystick.display: "chrome"` swaps in the
+browser edition (`game/index.html`), a Chrome `--app` window the daemon
+raises by pid and closes on game over.
+</details>
+
+## Status lights
+
+Colors are lifted from the ChatGPT app so the Claude keys read like Codex
+ones — and every one is customizable with a live preview on the hardware:
+
+| Status | Default | Meaning |
+|---|---|---|
+| `working` | 🔵 blue `#304FFE` | turn in progress |
+| `awaiting-approval` | 🟠 orange `#FF6D00`, breathing | dialog / question waiting on you |
+| `unread` | 🟢 green `#00FF4C` | turn finished, you haven't looked |
+| `idle` | ⚪ white | attached, nothing pending |
+| `error` | 🔴 red `#FF0033` | an action key press failed (brief flash) |
+| `empty` | dim white | pane exists, no Claude session in it |
+| — | off | no pane at that position |
+
+<details><summary>Where a status comes from (hooks reference)</summary>
+
+`hook.py` is wired into Claude Code's hooks and writes `state.json`; the
+daemon only reads it. A pane whose process tree has no `claude` shows
+`empty` regardless of stale state — a killed session can't leave a lying
+light.
+
+| Hook | Status |
+|---|---|
+| `SessionStart` | `idle` |
+| `UserPromptSubmit` | `working` |
+| `PermissionRequest` | `awaiting-approval` |
+| `Elicitation` / `ElicitationResult` | `awaiting-approval` / `working` |
+| `Notification` | depends on the message — see below |
+| `PostToolUse` | `working` — what takes a key back **off** orange |
+| `Stop` | `unread` |
+| `SessionEnd` | removed |
+
+**Notification is several events wearing one name.** A message mentioning
+*permission* is unconditionally orange. The idle *"waiting for your input"*
+nag — which fires ~60s after a turn ends — is orange only if the session was
+`working` or already orange (a question or dialog genuinely holding a turn
+open); for a finished session it changes nothing. Mapping every Notification
+to orange is how you get stale orange keys on idle sessions.
+</details>
 
 ## The configurator: `claude-micro`
 
-The installer puts `claude-micro` on your PATH — an interactive CLI for the
-whole setup, no JSON editing required. The main screen is a **live mirror of
-the device**: each agent key drawn in its actual LED color, refreshing in
-place as sessions change state.
+The installer puts `claude-micro` on your PATH. The main screen is a **live
+mirror of the device** — each agent key drawn in its actual LED color,
+refreshing in place as sessions change state:
 
 ```
 claude-micro configurator   daemon up · device connected
@@ -50,93 +284,61 @@ claude-micro configurator   daemon up · device connected
     Quit
 ```
 
+- **Keys** — assign anything to any key. *Identify mode*: press the physical
+  key you mean; the press is swallowed, never fired.
+- **Tmux** — the live pane map and both pane-addressing modes
+  ([guide](#guide-connecting-your-tmux-setup)).
+- **Colors** — a preset palette or free hex (`#RRGGBB` / `#RGB` / `0x…`)
+  with a **live swatch as you type**; every edit previews on the physical
+  LEDs and mirrors the effect (breath, snake, rainbow) as a terminal
+  animation. Ctrl+U clears a prefilled field.
+- **Test** — fire any key through the daemon's *real* dispatch path and see
+  the daemon log's verdict inline. Guards included: testing approve with no
+  dialog up shows you the refusal, exactly as a physical press would.
+
 Everything saves straight to `config.json`, which the daemon hot-reloads —
-there is no apply step. The CLI talks to the daemon over its localhost
-control API (`/state`, `/next-press`, `/press`, `/preview`), so the daemon
-remains the only process touching the device.
+no apply step. The CLI talks to the daemon over its localhost control API
+(`/state`, `/next-press`, `/press`, `/preview`), so the daemon remains the
+only process touching the device.
 
-## Connecting your tmux setup
+## Guide: wiring skills and actions
 
-Keys 1–6 jump between tmux panes, and setups disagree about what "the same
-place" means — so a key can find its pane **two ways**:
-
-| Mode | Config | Behaves like |
-|---|---|---|
-| **By position** | `{ "action": "tmux", "index": 0 }` | "the top-left pane, whatever lives there" — panes sorted session → window → top → left. Survives panes being killed and recreated. |
-| **Pinned** | `{ "action": "tmux", "target": "work:2.1" }` | "THAT pane, wherever it moves" — exact `session:window.pane`. Survives layout reshuffles; the key goes dark if the pane doesn't exist. |
-
-The CLI's **Tmux** screen shows your live panes in key order — with a ● on
-panes running Claude and a marker on where you are — and both assignment
-flows pick from that list rather than asking you to imagine indices:
-
-```
-Tmux — live panes in key order:
-  #1 powersesh:1.1          claude ●
-  #2 powersesh:1.2          node
-  #3 powersesh:1.3          claude ●
-  #4 powersesh:1.4          claude ●  ← you
-  #5 powersesh:2.1          node
-  ❯ Target mode: panes   panes = individual panes · windows = whole windows
-    Socket: auto          auto = learned from sessions; set for a custom -S socket
-    Reassign keys 1-6 to panes…
-```
-
-Also there:
-
-- **Target mode `windows`** — keys map to whole tmux windows instead of
-  individual panes (for one-window-per-project setups).
-- **Socket** — normally learned from the running sessions; set it explicitly
-  if you run tmux with a custom `-S` socket.
-- Multiple sessions just work: the sort covers all of them, and pinning is
-  the natural fit when your layout spans sessions.
-
-## Wiring skills and actions to buttons
-
-Any of the 13 keys can carry any action. Three ways to wire one:
+Three ways to wire a key, in order of comfort:
 
 1. **`claude-micro` → Keys** — pick the key from the list.
-2. **Identify mode** — pick "⊙ identify", press the physical key you mean,
-   land in its editor. The press is swallowed, so identifying a key never
-   fires it.
-3. **Edit `config.json` directly** — one entry per key under `keys`; the
-   daemon hot-reloads on save.
-
-```
-AG05 — currently: standup (/btw)
-  ❯ Jump to a tmux pane…       by position, or pinned to an exact pane
-    Slash command / prompt…    a skill or custom text, typed into the focused session
-    Review                     /code-review on the focused session
-    Approve dialogs            Enter on the highlighted option
-    Deny dialogs               Esc on the dialog
-    Nothing                    leave the key to the ChatGPT app
-    ▸ Test this key now        fires the real action
-```
+2. **Identify mode** — "⊙ identify", press the physical key, land in its
+   editor.
+3. **`config.json` directly** — one entry per key; hot-reloaded on save.
 
 ### The action types
 
-| Action | Config | What a press does |
+| Action | Config | A press… |
 |---|---|---|
-| `tmux` | `{ "action": "tmux", "index": N }` or `{ ..., "target": "sess:w.p" }` | jump there (double-press zooms) |
-| `prompt` | `{ "action": "prompt", "label": "standup", "text": "/btw" }` | types the text into the focused session and submits — drafts are stashed and restored, never lost |
-| `review` | `{ "action": "review", "effort": "high" }` | `/code-review` in the focused session; typed composer text becomes the review target |
-| `approve` | `{ "action": "approve", "cooldownMs": 700 }` | Enter on the visible dialog's highlighted option — refuses if no dialog is up |
+| `tmux` | `{ "action": "tmux", "index": 0 }` or `{ …, "target": "work:2.1" }` | jumps there (double-press zooms) |
+| `prompt` | `{ "action": "prompt", "label": "standup", "text": "/btw" }` | types into the focused session and submits |
+| `review` | `{ "action": "review", "effort": "high" }` | `/code-review`; typed composer text becomes the target |
+| `approve` | `{ "action": "approve", "cooldownMs": 700 }` | Enter on the visible dialog — refuses if none |
 | `deny` | `{ "action": "deny", "cooldownMs": 700 }` | Esc on the visible dialog — same guard |
+| `command` | `{ "action": "command", "run": "…" }` | runs a shell command — [below](#custom-actions-your-own-commands-and-keystrokes) |
+| `keys` | `{ "action": "keys", "keys": ["C-o"] }` | sends raw keystrokes to the focused pane |
 | `none` | `{ "action": "none" }` | leaves the key to the ChatGPT app |
+
+The `prompt` action never destroys typing: an in-progress draft is
+**stashed** (`C-s`), the command submits, the draft is restored. If you're
+actively typing at press-time it politely refuses instead of fighting your
+keyboard.
 
 ### Custom actions: your own commands and keystrokes
 
-Beyond the built-ins, two custom formats let a key do anything:
-
-**`command`** — run a shell command on press:
+**`command`** — any shell command, with press context as environment:
 
 ```json
 { "action": "command", "label": "deploy", "run": "~/bin/deploy.sh staging", "window": true }
 ```
 
-`window: true` opens it in a focused tmux window (interactive things, things
-you want to watch); without it the command runs detached — outcome logged,
-red flash on failure. Context arrives as environment, so scripts can act on
-where you were when you pressed:
+`window: true` opens a focused tmux window (interactive things, things you
+want to watch); without it the command runs detached — outcome logged, red
+key-flash on failure.
 
 | Variable | Value |
 |---|---|
@@ -145,19 +347,16 @@ where you were when you pressed:
 | `MICRO_PANE_PATH` | that pane's working directory |
 | `MICRO_SESSION` | that pane's tmux session name |
 
-**`keys`** — send raw keystrokes to the focused pane, in tmux `send-keys`
-syntax:
+**`keys`** — raw keystrokes in tmux `send-keys` syntax, for wiring device
+keys to any binding the pane's program understands — Claude Code's `C-o`
+(transcript), `M-t` (thinking toggle), or whatever your vim answers to:
 
 ```json
 { "action": "keys", "label": "transcript", "keys": ["C-o"] }
 ```
 
-Wire any binding the pane's program already understands — Claude Code's
-`C-o` (transcript), `M-t` (thinking toggle), or whatever your vim config
-answers to.
-
-**The action library** — define a custom action once in
-`~/.claude/micro/actions.json`, reuse it on any key with a reference:
+**The action library** — define once in `~/.claude/micro/actions.json`,
+reuse on any key with a reference:
 
 ```json
 // actions.json
@@ -168,27 +367,26 @@ answers to.
 "ACT10": { "use": "deploy-staging" }
 ```
 
-Library entries appear in the CLI's key editor (marked ⚡) with their
-descriptions, editing the library propagates to every key referencing it,
-and both files hot-reload. Fields set directly on a key override the
-library's. In the CLI, after building a custom action you're offered "save
-to the action library under a name" — that's how entries get created without
-touching JSON. An install ships `actions.json` with two `__example-*`
-entries to copy from.
+Library entries appear in the CLI's key editor marked ⚡; editing the
+library propagates to every key referencing it; fields set directly on a key
+override the library's; both files hot-reload. After building a custom
+action in the CLI you're offered "save to the library" — that's how entries
+get created without touching JSON. A dangling `use` shows red in the CLI
+instead of failing silently. An install ships two `__example-*` entries to
+copy from.
 
-### Where skills live, and how buttons find them
+### Where skills live
 
-A **skill** is a folder with a `SKILL.md` — the prompt/instructions a slash
-command carries. Two places matter:
+A **skill** is a folder with a `SKILL.md` — the instructions a slash command
+carries. Two places matter:
 
-- **`~/.claude/skills/<name>/SKILL.md`** — user-level: available in every
-  project, and **this is what the CLI's skill picker lists**. The skills this
-  repo ships (`/btw`, `/research`, `/ship`) install here.
-- **`<repo>/.claude/skills/<name>/SKILL.md`** — project-level: available only
-  to sessions in that repo. A button can still type it (`Custom text…` →
-  `/that-skill`), it just won't be in the picker.
+- **`~/.claude/skills/<name>/SKILL.md`** — user-level: every project, and
+  **what the CLI's picker lists**. This repo's skills install here.
+- **`<repo>/.claude/skills/<name>/SKILL.md`** — project-level: sessions in
+  that repo only. A button can still type it (Custom text → `/that-skill`);
+  it won't be in the picker.
 
-Minimal anatomy of a button-friendly skill:
+Minimal button-friendly skill:
 
 ```markdown
 ---
@@ -203,647 +401,250 @@ Report in one tight paragraph what this session is working on,
 what just changed, and what happens next. Take no actions.
 ```
 
-Drop that at `~/.claude/skills/standup-brief/SKILL.md`, run `claude-micro`,
-assign it to a key — the picker finds it immediately. Two behaviors worth
-knowing:
+Drop it in, run `claude-micro`, assign it — the picker finds it immediately.
+Worth knowing: a button types into the **focused pane's** session, so one
+key works across every project, each session answering from its own
+context; and sessions discover skills at start — a session older than the
+skill needs a restart to know the command.
 
-- A button types `/name` into the **focused pane's** session, so one key
-  works across every project — each session answers from its own context.
-- Sessions discover skills at start; a session older than the skill won't
-  know the command until restarted.
-- The prompt action never destroys typing: an in-progress draft is stashed
-  (`C-s`), the command is submitted, and the draft is restored. If you're
-  actively typing at press-time, the key politely refuses instead.
+## Guide: connecting your tmux setup
 
-### Colors
+Keys find panes **two ways**, because setups disagree about what "the same
+place" means:
 
-Per-status color / effect / speed / brightness, each edit **previewed live on
-the device's LEDs** and mirrored as an animation in the terminal — tuning a
-color by hex code is not tuning a color. Picking one offers a curated palette
-(swatches + hex), or **Custom hex** — `#RRGGBB`, `RRGGBB`, `0xRRGGBB`, and
-`#RGB` shorthand all parse, with a live swatch rendering on the prompt line
-as you type. Ctrl+U clears a prefilled field.
+| Mode | Config | Behaves like |
+|---|---|---|
+| **By position** | `{ "action": "tmux", "index": 0 }` | "the top-left pane, whatever lives there" — panes sorted session → window → top → left. Survives pane churn. |
+| **Pinned** | `{ "action": "tmux", "target": "work:2.1" }` | "THAT pane, wherever it moves" — exact `session:window.pane`. Survives reshuffles; the key goes dark if the pane doesn't exist. |
+
+The CLI's **Tmux** screen shows your live panes in key order — ● marks panes
+running Claude, plus your current position — and both assignment flows pick
+from that list rather than asking you to imagine sorted indices:
 
 ```
-Status colors
-  ❯ ██████  working             solid · turn in progress
-    ██████  awaiting-approval   breath 0.4 · permission prompt / waiting on you
-    ██████  unread              solid · turn finished, not yet looked at
-    ██████  idle                solid · attached, nothing pending
+Tmux — live panes in key order:
+  #1 powersesh:1.1          claude ●
+  #2 powersesh:1.2          node
+  #3 powersesh:1.3          claude ●
+  #4 powersesh:1.4          claude ●  ← you
+  #5 powersesh:2.1          node
+  ❯ Target mode: panes   panes = individual panes · windows = whole windows
+    Socket: auto          set for a custom -S socket
+    Reassign keys 1-6 to panes…
 ```
 
----
+Also there: **target mode `windows`** — keys map to whole tmux windows, for
+one-window-per-project setups — and custom **socket** paths (normally
+learned from the running sessions). Multi-session layouts just work: the
+sort spans sessions, and pinning is the natural fit when your layout does
+too.
 
-Turns the Codex Micro's first four agent keys into a **tmux switcher lit by
-Claude Code session state**. Nothing here talks to Codex.
+## Companion skills
 
-    AG00  tmux target 1     (this daemon)
-    AG01  tmux target 2     (this daemon)
-    AG02  tmux target 3     (this daemon)
-    AG03  tmux target 4     (this daemon)
-    AG04  review            (this daemon)
-    AG05  standup prompt    (this daemon)
+Installed to `~/.claude/skills`, wired to keys 6, 7, 10 by default — and
+just as useful typed by hand:
 
-Every key is one entry in `config.json`, which is the schema the eventual setup
-CLI will write:
-
-    "keys": {
-      "AG00": { "action": "tmux",   "index": 0 },
-      "AG04": { "action": "review", "effort": "high" },
-      "AG05": { "action": "none" }
-    }
-
-`index` selects which tmux target a key owns. `"none"` leaves the key to the
-ChatGPT app. Changes are hot-reloaded — no restart. Adding an action means
-adding one entry to the `ACTIONS` registry in `daemon.js`; nothing else in the
-daemon needs to know about it.
-
-Each key owns one tmux pane **by position, not by recency**, so a key always
-means the same place. Order is session, then window, then top-to-bottom and
-left-to-right — for a 2×2 grid that's top-left, top-right, bottom-left,
-bottom-right. Press a key to jump there; its color shows the Claude Code
-session running in that pane, or dim white if there isn't one. The pane you're
-currently in shows at full brightness while the others are dimmed, so "where I
-am" is readable at a glance.
-
-## Status colors
-
-Lifted from the ChatGPT app so the Claude keys match the Codex ones exactly:
-
-| Status | Color | Meaning |
-|---|---|---|
-| `working` | blue `#304FFE` | turn in progress |
-| `awaiting-approval` | orange `#FF6D00`, breathing | permission prompt / waiting on you |
-| `unread` | green `#00FF4C` | turn finished, you haven't looked |
-| `idle` | white `#FFFFFF` | attached, nothing pending |
-| `error` | red `#FF0033` | reserved (not yet emitted) |
-| `empty` | dim white | pane exists, no Claude session in it |
-| — | off | no pane at that position |
-
-Pressing a key switches your tmux client to that pane, raises the terminal
-window in front of whatever you were looking at, and clears the pane's unread
-light — so the pane is typed-into the moment the key is up. Navigation works
-whether or not a Claude session lives there.
-
-Which app to raise is worked out from the tmux client attached to that session:
-walk up its process tree until a `.app` bundle turns up. Name one outright with
-`focusApp` if the walk can't reach yours (a client behind ssh, say), or turn the
-whole thing off with `"focusTerminal": false`.
-
-### Double press to zoom
-
-A second press of the same key within `doublePressMs` (600ms) zooms that pane to
-the full window; the one after that puts it back. It's `tmux resize-pane -Z`, so
-the daemon keeps no zoom state of its own and can't disagree with tmux about
-what's zoomed. `"doublePress": "none"` turns it into an ordinary press.
-
-Positions are read from `window_layout` rather than from `pane_top`/`pane_left`
-**because** of this. A zoomed pane reports itself at `0,0` filling the window,
-colliding with whatever really lives top-left, which reshuffled the positional
-sort and quietly repointed the keys at different panes. `window_layout`
-describes the layout ignoring zoom, so a key means the same pane zoomed or not.
-
-### Whole-keyboard glow
-
-The pane you're currently in also washes the **entire device** — key backlight
-and ambient ring — in that session's status color, so the status you're sitting
-in is readable without looking at any single key. `working` animates (snake),
-everything else sits solid, matching the distinction the Codex app draws for a
-selected thread. An active pane with no Claude session in it leaves the wash
-off.
-
-Tune with `glowBrightness` (default `0.4`), turn it off with `glow: false`, or
-reserve it for states worth announcing:
-
-    "glowStatuses": ["working", "awaiting-approval", "error"]
-
-## The knobs
-
-A knob acts on the pane you're in rather than owning one, so it pairs with the
-keys: press a key to get somewhere, turn to change how the session there
-behaves.
-
-| Gesture | What it does | Sends |
-|---|---|---|
-| Turn | cycles permission modes — clockwise forward, anticlockwise back | `BTab` (`chat:cycleMode`) |
-| Press | opens the model list | `M-p` (`chat:modelPicker`) |
-| Turn, with the list up | moves through the models | `Up`/`Down` |
-| Press again | applies the highlighted one to this session | `s` |
-
-**Anticlockwise is a lap minus one step.** Shift+Tab only cycles forward and
-Claude Code has no reverse action, so going back means going forward
-`modeCycle - 1` times. That number has to be right or the direction is simply
-wrong — with a 4-mode cycle, a `modeCycle` of 3 sends two taps and lands you
-*forward* two instead of back one. Measured rather than assumed:
-
-    manual -> accept edits -> plan -> auto -> manual
-
-so `modeCycle` is `4`. Check yours by pressing Shift+Tab and reading the footer
-round to where it started.
-
-**A press confirms with `s`, not Enter.** The picker offers both: `Enter` sets
-your default model for every session you start afterwards, `s` applies it to the
-session in front of you. A knob that acts on the pane you're in shouldn't
-silently rewrite a global setting — set `"confirm": "default"` if you want the
-other one.
-
-Nothing here touches the composer. An earlier version typed `/model`, which
-meant emptying the prompt first — so a click part-way through writing a message
-tried to delete it. The picker has its own binding; it gets asked for by key.
-
-Whether the list is really up is checked against the rendered pane before either
-gesture acts, not just remembered — you can close it with Esc and the daemon
-can't see that. Acting on a stale belief is the expensive kind of wrong: turns
-would walk your prompt history into the composer.
-
-That check reads a marker off the pane, which means reading it **at that pane's
-width**. The footer is one long line, and in a 66-column pane — the width the
-keys exist to serve — it wraps between `Esc to` and `cancel`, so matching the
-phrase as written found nothing and every turn fell through to cycling modes
-while the list sat open. Newlines are flattened to spaces before matching. Any
-marker taken off a TUI has this failure mode; test it at the narrow width, not
-the one your test window happens to be.
-
-One press of this encoder arrives as a **burst of eight notifications inside
-100ms**, so clicks are debounced by `knobClickMs` (300ms). Without it a single
-click opened the list and then confirmed it seven times over.
-
-### Smoothing the rotation
-
-The encoder reports a detent for the smallest movement, so raw it fires on a
-brush past the knob. Two mechanisms, aimed at two different noises:
-
-| Setting | Default | What it does |
-|---|---|---|
-| `turnWindowMs` | `80` | detents inside this window apply as a **net** figure, so a spurious step one way and one back cancel instead of becoming two actions |
-| `turnSteps` | `2` | gearing: detents per action. `1` is one-for-one |
-| `turnIdleMs` | `4000` | how long a leftover part-step waits for its partner before decaying |
-
-At `turnSteps: 2` a nudge does nothing, a deliberate turn still works, and a
-fast spin stays proportional — 8 detents become 4 moves. The remainder is kept
-so slow turns add up, but not forever, or a stray detent from an hour ago would
-pair with the next one you meant.
-
-Both are hot-reloaded: turn `turnSteps` up if it's still twitchy, down to `1` if
-it now feels sluggish, and the change takes effect on the next turn.
-
-### Naming a knob
-
-Encoder names aren't documented and vary by firmware, so they're config rather
-than a guess. Turn a knob and the daemon reports what it saw, once:
-
-    unknown control ENC_CW: {"k":"ENC_CW","act":2} -- name it in config.json
-    under knobs.left.key or knobs.right.key
-
-This firmware sends **one name per direction** and a third for the press, with
-rotation carrying `act: 2` rather than a key-style press/release:
-
-    ENC_CW   act 2    clockwise
-    ENC_CC   act 2    anticlockwise
-    ENC_CLK  act 1    press
-
-which is wired as:
-
-    "knobs": {
-      "left":  { "key": "ENC_CLK", "cw": "ENC_CW", "ccw": "ENC_CC",
-                 "turn": "mode", "click": "model" },
-      "right": { "key": null, "turn": "none", "click": "none" }
-    }
-
-Rotation arrives one of two ways and both are read: a name per direction as
-above, or a signed field on the notification (`d`, `dir`, `delta`, `step`,
-`val`, `v`) — for that shape, set `key` alone and leave `cw`/`ccw` null.
-
-`"debugReports": "raw"` logs every report the device sends, hex and decoded, for
-working out a control that doesn't announce itself. RPC acks are filtered out of
-that, or they'd bury everything else.
-
-## The joystick: d-pad first, game second
-
-The right joystick reports over its own channel (`v.oai.rad`, `{a, d}` — angle
-as a fraction of a full turn, distance from center). Flicks are quantized to
-the app's own quadrants (up / down / left / right), and what a flick *means*
-depends on what's on screen in the focused session:
-
-- **A dialog is up** (permission prompt, model picker, any selection menu):
-  the stick is a d-pad — each flick lands as that arrow key. Jump to an orange
-  key, flick down to the option you want, thumb the approve key.
-- **No dialog**: flicks feed the game gesture. The game only opens after one
-  **continuous swirl through all four directions** — the agent keys fill a
-  quarter per direction visited — so menu navigation or knocking the stick can
-  never trigger it. Letting the stick center (or stalling past `idleDropMs`)
-  resets the gesture.
-
-The game is **micro-drift**, same spirit as the Codex app's hidden one: an
-arrow adrift in space, steered by the joystick, dodging asteroids that get
-faster and more numerous. Touch one and the run ends: explosion, score, and
-the window closes itself.
-
-Mechanics:
-
-- **The game is a tmux window**: the charge completing runs `game/drift.js` in
-  a new window named `drift`, which opens focused in the session you're
-  already in — no macOS window-raising rituals (the first Chrome version
-  opened *behind* the terminal, and its player reasonably reported that
-  nothing had opened). The process exiting closes the window, so a crash puts
-  you right back where you were.
-- The daemon still runs a localhost server (lazy, `gamePort`) that streams
-  joystick positions over SSE; the game subscribes to it and POSTs `/gameover`
-  on the way out. A window killed by hand is reaped when its SSE stream drops,
-  so a dead game can't block the next charge.
-- Terminal cells are ~2× taller than wide, so the game doubles vertical
-  distances for collision and halves vertical motion to keep space square.
-- While the game runs the agent row goes rainbow and the joystick belongs to
-  the ship; crash (or `q`/Esc) and everything returns to session state. Arrow
-  keys also steer.
-- `joystick.display: "chrome"` brings back the browser version
-  (`game/index.html`, Chrome `--app` window raised by pid).
-- Config under `joystick`: `deadzone` (0.3), `chargeMs` (2000), `idleDropMs`
-  (350), `gamePort` (4477), `display` (`tmux`).
-
-## The action keys (ACT06–ACT12)
-
-Below the agent row the device has seven action keys, `ACT06`–`ACT12`, with
-swappable keycaps. They emit presses like the agent keys but have **no per-key
-LED**, so their feedback is what happens in the pane (plus a log line). Assign
-them in `keys` like any other key; unassigned ones are reported once on first
-press so you can see their name.
-
-Leave any key the daemon owns unassigned in the ChatGPT app's Codex Micro
-settings, same rule as the agent keys — an app-side assignment would fire *in
-addition to* the daemon's.
-
-`ACT06` (the 7th key — the numbering continues from the agent row) is the
-**research key**: it types `/research` into the focused session. The skill
-(`~/.claude/skills/research/SKILL.md`) has the session frame a research brief
-from its own context — the active topic, current architecture, constraints,
-what's been ruled out — and launch a **Fable** agent to do the deep
-architectural pass. The report comes back structured: problem, current
-architecture, options each with pros/cons and migration cost, a plain
-recommendation, ordered next steps, risks. Expect it to take minutes, not
-seconds — it reads real code before theorizing. Typing `/research <topic>` by
-hand overrides the inferred topic; the key always researches the active one.
-
-`ACT07` / `ACT08` (keys 8 and 9) are **approve** and **deny**. Approve sends
-**Enter** — accepting the dialog's *highlighted* option, which is "1. Yes"
-untouched, or whatever the joystick was flicked to. Deny sends **Esc**, the
-dialog's documented cancel. NOT `y`/`n`: the keybinding docs list those for
-the Confirmation context, and testing against the real numbered permission
-dialog showed they do nothing there — digits, Enter, and Esc are what it
-speaks. Enter over `'1'` is deliberate: the joystick moves the highlight, so
-approve means "confirm what I selected", not "always the first option".
-
-The guard is the composer read inverted — a dialog must actually be on screen
-(the unframed `❯` of a selection menu), or the press refuses rather than
-sending a stray keystroke; that guard is also what makes Esc safe, since it
-can never reach a running turn. Cooldown is short (`cooldownMs: 700`) because
-permission prompts arrive back to back. The natural loop: a key breathes
-orange, press it to jump there, flick the joystick to the option you want,
-thumb 8 — all without the keyboard.
-
-`ACT09` (key 10) is **ship**: it types `/ship`, a user-level skill
-(`~/.claude/skills/ship/SKILL.md`) that opens a PR the way a human would.
-It verifies the work sits on a clean, properly named branch — moving it off
-main if that's where it is, committing stragglers in the repo's message
-convention — pushes, and writes a concise PR: repo-convention title, a few
-sentences of what/why/how-verified, **no AI attribution of any kind** (no
-generated-with footer, no Co-Authored-By; the skill explicitly overrides
-defaults that add them). Distinct from monolog's project `/pr` skill, which
-stays template-driven.
-
-### The `prompt` action
-
-Types a canned prompt into the focused pane's Claude session and submits it —
-the ask lives in config, so each key's wording is tunable without code:
-
-    "AG05": { "action": "prompt", "label": "standup", "text": "Give me a structured status update..." }
-
-`AG05` — the sixth agent key, which does have an LED — is the **standup key**:
-it types `/btw` into the focused session. The `btw` skill
-(`~/.claude/skills/btw/SKILL.md`) runs as a **fork**: a subagent inheriting
-the session's full conversation writes the update (done / current issue /
-remaining / risks, plus a three-sentence spoken-standup section) without
-steering the session — and renders it in view as it completes. It reads the
-whole conversation first, so give it a minute on a long session. The key sends one short command rather
-than a wall of prompt text, so the transcript stays clean and the ask never
-lands as a primary prompt steering the session. Sessions started before the
-skill existed don't know `/btw` — restart those panes once.
-
-Anything already typed in the composer is a draft the user means to keep — it's
-**stashed** (`chat:stash`, one atomic C-s), the command is submitted, and a
-second C-s brings the draft back. An earlier version deleted and retyped the
-draft, which raced the user's own typing: press the key mid-sentence and the
-verify loop kept seeing the keystrokes still being made, so the press "didn't
-work" precisely when the user was busiest. Stash can't lose text — worst case
-the draft sits in the stash and C-s recalls it by hand. If keystrokes are still
-landing after the stash, the press steps aside with an error rather than
-fighting for the keyboard, and pressing again after submitting works.
-
-Pressing mid-turn is fine: Claude Code queues the message and answers it when
-the current step completes. If a permission dialog is up, the press refuses
-(same guard as the review key). Between typing a command and submitting it the
-daemon waits a beat — a rapid burst ending in Enter can read as a paste, and a
-submit swallowed into a paste is just a newline left sitting in the composer.
-
-## The review key
-
-`AG04` reviews whatever is worth reviewing, decided at press time. Exactly three
-cases, in precedence order:
-
-| Situation | What gets reviewed |
+| Skill | What it does |
 |---|---|
-| Text typed in the focused pane's composer | that PR number, PR URL, or branch |
-| Uncommitted changes in the repo | the working diff |
-| Clean tree, branch ahead of base | its PR if one exists, else the branch |
-
-A fourth outcome — clean tree with nothing ahead — is reported as "nothing to
-review" rather than treated as an error.
-
-The composer case is what makes the key work for remote branches: type `4821` or
-a PR URL or a branch name into the Claude prompt, *don't* submit it, press the
-key. Unsubmitted input can only be read off the rendered pane, so it's taken
-from the single line after the `❯` marker.
-
-**The review runs inside the session you're looking at.** The key types
-`/code-review <effort> [target]` into that pane's composer and submits it. No
-new panes, no new windows. Two reasons that beats spawning a headless run: the
-session already knows its own repo and what it has been changing — better
-context than anything inferable from the pane's cwd — and its findings render
-natively in the TUI, where you can follow up with "fix the second one".
-
-Because the work happens in the session, that **session's** key shows the
-progress: blue while reviewing, green when it finishes. The review key itself
-stays dim, and flashes red for a few seconds if it couldn't dispatch — no Claude
-in the focused pane, or the session sitting on a permission prompt.
-
-A second press within `actionCooldownMs` (2.5s) is ignored, so a double tap
-can't queue two reviews.
-
-### Reading the composer safely
-
-Three traps, all handled:
-
-- **Ghost text looks exactly like a draft.** Claude Code renders hints and
-  unsent-message reminders *faint* (SGR 2) inside an empty composer. In a
-  plain `capture-pane` that's indistinguishable from typed input: the daemon
-  once spent a morning trying to delete text that didn't exist — C-u, forty
-  backspaces, stash, all "failing" — and refusing every key press because the
-  "draft" wouldn't die. The composer is therefore captured **with escape
-  codes** (`-e`), and faint text after the `❯` reads as empty. Styling is the
-  only reliable discriminator; the text itself can be anything, including an
-  echo of the user's previous message.
-
-- **A selection menu also draws `❯`.** A trust prompt renders
-  `❯ 1. Yes, I trust this folder`, which would be read as a review target. The
-  real composer is framed by box rules above and below; an unframed `❯` means a
-  menu is up, and the action refuses rather than typing into a dialog.
-- **Typed text has to be cleared**, or the command would be appended to it. The
-  clear is `C-u`, verified by re-reading the composer, falling back to counted
-  backspaces, and aborting if the line still isn't empty.
-
-### Headless mode (opt-in)
-
-`"AG04": { "action": "review", "mode": "headless" }` runs the review in a
-detached `review` window via `claude -p` instead — useful when the focused pane
-isn't a Claude session. It needs an output contract to produce anything
-readable; see `bin/review.sh` and the note below.
-
-### Getting a report out of a headless review
-
-Only applies to `mode: "headless"`; in-session reviews render natively and need
-none of this. Worth knowing if you touch `bin/review.sh`: the `code-review` skill delivers
-findings through the `ReportFindings` tool, which renders nothing under
-`--print`. The final message came back as literally `(none)`.
-
-Fixing it took two goes. Putting the output contract in
-`--append-system-prompt` lost every time — the skill's own "report via tool,
-don't print findings" rule won. What works is invoking the skill *from the
-prompt* (`Run the code-review skill ... with arguments: <effort> <target>`) so
-the contract sits in the same turn and can override it, plus keeping that
-contract mechanical and numbered rather than prose. The result is a report with
-a `VERDICT:` line, findings ordered by severity with `file:line` and a concrete
-failure scenario each, and a `Checked` section.
-
-### Where a status comes from
-
-Hook state is authoritative, but it only exists once a session has fired an
-event. So the pane's process tree is checked too — a pane whose shell has a
-`claude` child is a live session:
-
-| Pane | Hook state | Shows |
-|---|---|---|
-| `claude` running | yes | the reported status |
-| `claude` running | none yet | `idle` |
-| no `claude` | either | `empty` (dim white) |
-
-Which hooks write that state, and what each one means:
-
-| Hook | Status |
-|---|---|
-| `SessionStart` | `idle` |
-| `UserPromptSubmit` | `working` |
-| `PermissionRequest` | `awaiting-approval` |
-| `Elicitation` / `ElicitationResult` | `awaiting-approval` / `working` |
-| `Notification` | depends on the message — see below |
-| `PostToolUse` | `working` |
-| `Stop` | `unread` |
-| `SessionEnd` | removed |
-
-**Notification is several events wearing one name**, and mapping them all to
-orange painted finished sessions as "waiting on you": the idle *"Claude is
-waiting for your input"* nag fires ~60s after a turn ends, long after there's
-anything to approve — that was the stale orange. Now: a message mentioning
-*permission* is unconditionally orange; the idle nag is orange only if the
-session was `working` or already orange (meaning a question or dialog really
-is holding a turn open); for a session that already finished, it changes
-nothing. `PermissionRequest`/`Elicitation` report dialog state directly and
-without guessing, but hook configs snapshot at session start — sessions
-started before they were wired rely on the Notification heuristic alone.
-
-`PostToolUse` is what takes a key back **off** orange, and it was missing.
-Nothing fired between `Notification` and `Stop`, so answering a permission
-prompt left the session recorded as `awaiting-approval` for the rest of the
-turn — the key sat orange through minutes of work you'd already unblocked, and
-the one status that means "go look at this" was the one you learned to ignore. A
-completed tool call is the proof that nothing is waiting any more.
-
-That last row matters: it means stale state is ignored rather than trusted, for
-a session whose `claude` was killed without firing `SessionEnd`.
+| **/btw** | Structured status — done / current / remaining / risks — plus a 3-sentence plain-language standup anyone in the room understands. Answered inline by the session: full context, one line of transcript noise. |
+| **/research** | The session frames a research brief from its own context, then delegates the deep architectural pass to a **Fable** agent: options with pros/cons and migration costs, a plain recommendation with its flip conditions, ordered next steps, risks. |
+| **/ship** | Verifies the work sits on a clean, properly named branch (moving it off main if that's where it is), commits stragglers in the repo's own convention, pushes, and opens a **concise, human-written PR** — no AI attribution anywhere, explicitly. |
 
 ## How it works
 
-The Micro is a Work Louder device (`303a:8360`) speaking JSON-RPC 2.0 over a
-vendor HID interface (usage page `0xFF00`). Two channels are used, because each
-one only works in one direction:
+```
+ Codex Micro ──HID──▶ daemon.js ◀──hooks── Claude Code sessions
+      ▲                  │ ▲                  (hook.py → state.json)
+      │ lighting RPCs    │ │ localhost API
+      ╰──────────────────╯ ▼
+                  claude-micro CLI · micro-drift game
+```
 
-- **Writes** — `@worklouder/device-kit-oai`, the SDK that ships inside
-  `ChatGPT.app`. `RPCApiOAI.sendThreadsLighting()` sets per-key color,
-  brightness, effect and speed.
-- **Reads** — a raw `node-hid` handle, parsed in `daemon.js`. The SDK's
-  `onHidReceived()` never fires on this firmware: the device emits
-  `{"m":"v.oai.hid","p":{"k":"AG02","act":1}}`, but the bundled dispatcher only
-  matches JSON-RPC `{method, params}`. Report framing is
-  `06 02 <len> <ascii json> 0d 0a`, zero-padded to 64 bytes.
+- **Writes** go through `@worklouder/device-kit-oai` — the SDK inside
+  ChatGPT.app, extracted locally by `extract-sdk.js`, never vendored.
+- **Reads** are a raw `node-hid` handle: the firmware emits
+  `{"m":"v.oai.hid","p":{"k":"AG02","act":1}}` notifications the bundled
+  dispatcher doesn't match, so the daemon parses reports itself. Both
+  handles open non-exclusive, coexisting with the ChatGPT app.
+- **Session state** flows from Claude Code hooks (`hook.py`) into
+  `state.json`; the daemon watches the file, so a finishing turn repaints in
+  ~25ms instead of on the next poll. Unchanged lighting is never re-sent
+  except to beat the app's repaints.
+- The **control API** (`127.0.0.1:<gamePort>`) serves the CLI and the game:
+  state, press-identify, synthesized presses, lighting previews, SSE.
 
-Both handles open non-exclusive, so this coexists with the ChatGPT app.
+## Field notes
 
-### Two things that surprised me, and shape the design
+The gotchas that shaped the design. Each cost a real debugging session, so
+they're written down where the next person can find them.
 
-1. **The app stomps one-shot writes.** It tracks an `appliedThreadLightingKey`
-   and repaints all six keys whenever its own state changes — or whenever it
-   reconnects, which a second process touching the device can itself trigger. A
-   single write is invisible; the daemon re-asserts every `threadsReassertMs`
-   (500ms), and that wins.
-   This is also why the two Claude slots must be left **unassigned** in the
-   app's Micro settings: unassigned keys are painted "off", so nothing contends
-   for them. Keys the app thinks it owns will fight you.
-2. **The device sleeps.** On wireless it drops off HID entirely when idle and
-   reappears on the next keypress, so connect/paint failures are normal and the
-   daemon just reconnects. When every slot is off it stops writing altogether
-   rather than keeping the device awake for nothing.
-3. **`tmux -F` output is environment-dependent.** With no usable locale — which
-   is exactly how launchd runs things — tmux sanitizes control characters in
-   format output, so a tab delimiter arrives as `_` and every line parses as a
-   single field. Same format string, different bytes. Hence the printable
-   `|;;|` delimiter, a forced `LANG`, and a parser that skips short lines
-   instead of letting one bad line break the sort.
+<details><summary><b>The ChatGPT app stomps one-shot lighting writes</b></summary>
 
-### Keeping the lights honest
+The app repaints all six keys whenever its own state changes — or whenever
+it reconnects, which a second process touching the device can itself
+trigger. A single write is invisible. The daemon re-asserts unchanged
+lighting every `threadsReassertMs` (500ms), sends changes immediately, and
+otherwise never repeats an identical payload — identical writes four times a
+second kept the link busy enough that real changes queued behind traffic
+saying nothing. This is also why keys the daemon owns must be **unassigned**
+in the app.
+</details>
 
-The keys should be right the instant something changes, and the tick shouldn't
-be what decides how late they are. Four things get in the way of that, all of
-them fixed rather than tuned:
+<details><summary><b>Bluetooth: pretty lights tax the joystick</b></summary>
 
-- **Redundant writes crowd out real ones.** An unchanged payload isn't sent;
-  the same change-or-stale rule the glow uses now covers the keys too. Writing
-  identical state four times a second kept the link busy for nothing, so a real
-  change queued behind traffic saying what the device already knew.
-- **A change during a write used to be dropped.** Only one RPC is in flight at a
-  time, and a paint that arrived mid-write returned and waited for the next
-  tick. It's remembered instead, and runs the moment the write finishes.
-- **Nothing worth showing waits for the tick.** A hook writing `state.json`, a
-  press, a zoom, a config reload — each repaints within `nudgeMs` (25ms). The
-  tick is the fallback, not the schedule.
-- **Cheap reads shouldn't run at the pace of expensive ones.** Where you are
-  changes on every press; whether a pane has `claude` in it changes when you
-  start or quit one. The pane list is re-read every tick (`panesTtlMs`), while
-  the full `ps` scan runs on its own clock (`claudeScanMs`, 1.5s) off the paint
-  path.
+On BLE, every lighting RPC competes with input notifications for connection
+airtime — the game's controls were laggy *because the rainbow was pretty*.
+While a game runs the daemon goes radio-quiet: the rainbow goes out once and
+nothing re-asserts until the game ends. Nagle's algorithm also buffered the
+~30-byte SSE joystick frames — exactly what it exists to coalesce — so the
+stream sets `TCP_NODELAY`.
+</details>
 
-### Coming back after a drop
+<details><summary><b>Ghost text: the composer lies to plain capture</b></summary>
 
-Wireless, the Micro drops off HID when it sleeps and reappears when you touch
-it. Retries used to be a flat 2s poll from a fixed starting point, and a drop
-could sit unlit far longer than that. Now the first retry after a drop is the
-next tick, each failure doubles the wait to a 2s ceiling, and any success resets
-it — so a wake is picked up immediately and a Micro left in a drawer is polled
-twice a second at worst. A reconnect repaints in the same tick rather than the
-one after, and a half-open attempt closes its handles before backing off, since
-a leftover handle is what stops the next attempt from working.
+Claude Code renders hints — including an echo of your previous message —
+*faint* (SGR 2) inside an **empty** composer. In a plain `capture-pane`
+that's byte-identical to a typed draft: the daemon once spent a morning
+sending C-u, forty backspaces, and a stash at text that didn't exist,
+refusing every key press because the "draft" wouldn't die. The composer is
+read **with escape codes** (`-e`), and faint text after the `❯` counts as
+empty. Styling is the only reliable discriminator.
+</details>
 
-## Files
+<details><summary><b>Reading the composer safely: two more traps</b></summary>
+
+A selection menu also draws `❯` — a trust prompt renders `❯ 1. Yes, I trust
+this folder`, which must never be read as typed input nor typed into. The
+real composer is framed by box rules; an unframed `❯` means a dialog is up —
+and that same signal, inverted, is the approve/deny guard. Separately: any
+marker read off a TUI must be tested **at the pane's real width** — the
+model picker's footer wraps mid-phrase at 66 columns, which once broke
+picker detection in exactly the panes the keys exist to serve. Captured text
+is flattened before matching.
+</details>
+
+<details><summary><b>The permission dialog does not speak y/n</b></summary>
+
+The documented Confirmation bindings say `y`/`n`; tested against the real
+numbered permission dialog, they do nothing. **Digits** pick options
+directly, **Enter** accepts the highlighted option, **Esc** cancels. Approve
+sends Enter rather than `1` deliberately — the joystick moves the highlight,
+so approve means "confirm what I selected", not "always the first option".
+</details>
+
+<details><summary><b>tmux -F output is environment-dependent</b></summary>
+
+With no usable locale — exactly how launchd runs things — tmux sanitizes
+control characters in format output: a tab delimiter arrives as `_` and
+every line parses as one field. Hence a printable `|;;|` delimiter, a forced
+`LANG`, and a parser that skips short lines. Relatedly, pane positions come
+from `window_layout`, not `pane_top`/`pane_left`: a zoomed pane reports
+itself at 0,0 filling the window, which reshuffled the positional sort and
+silently repointed keys at different panes.
+</details>
+
+<details><summary><b>Wireless reconnect: fast when it matters</b></summary>
+
+The Micro drops off HID when it sleeps and reappears when touched. Retries
+back off exponentially from *immediate* to a 2s ceiling — a wake is caught
+on the next tick, a Micro in a drawer is polled twice a second at worst —
+and a reconnect repaints in the same tick rather than the one after.
+Half-open connection attempts close their handles before retrying, since a
+leftover handle is what blocks the next attempt.
+</details>
+
+<details><summary><b>The review key's composer trick, and headless mode</b></summary>
+
+Type a PR number, URL, or branch into the composer — don't submit — and
+press review: the typed text becomes the review target. The review runs
+*inside* the session you're looking at (better context than anything
+inferable from a cwd, findings render natively). `"mode": "headless"`
+instead runs `claude -p` in a detached window — it needs an explicit output
+contract (see `bin/review.sh`) because the code-review skill's findings tool
+renders nothing under `--print`.
+</details>
+
+## Configuration reference
+
+`~/.claude/micro/config.json`, hot-reloaded on save. The configurator edits
+all of the common ones; this is the full list.
+
+<details><summary><b>All settings</b></summary>
+
+| Key | Default | Meaning |
+|---|---|---|
+| `keys` | — | one entry per key; see [action types](#the-action-types) |
+| `target` | `"panes"` | `"windows"` maps keys to whole windows |
+| `tmuxSocket` | `null` | custom `-S` socket; `null` = learned from sessions |
+| `brightness` | `1` | master key-LED brightness |
+| `inactiveDim` / `highlightActive` | `0.35` / `true` | dim keys that aren't where you are |
+| `glow` / `glowBrightness` / `glowStatuses` | `true` / `0.4` / `null` | whole-device wash in the focused session's color |
+| `statusStyle` | — | per-status `color` (RGB int), `effect` (`solid`/`breath`/`snake`/`rainbow`/`gradient`/`shallowBreath`/`off`), `speed`, `brightness` |
+| `pressDebounceMs` | `60` | chatter guard; must stay well under `doublePressMs` |
+| `doublePressMs` / `doublePress` | `600` / `"zoom"` | double-press window and meaning |
+| `focusTerminal` / `focusApp` | `true` / `null` | raise the terminal on press; name the app if discovery can't reach it |
+| `knobs.left` | `ENC_*` | encoder control names + `turn` / `click` / `confirm` |
+| `modeCycle` | `4` | permission modes per Shift+Tab lap — measure yours |
+| `pickerIdleMs` / `knobClickMs` | `15000` / `300` | model-list freshness · click debounce |
+| `turnSteps` / `turnWindowMs` / `turnIdleMs` | `2` / `80` / `4000` | rotation gearing / net-delta window / part-step decay |
+| `joystick` | `{ deadzone: 0.3, … }` | `chargeMs`, `idleDropMs`, `gamePort`, `display` (`tmux`/`chrome`) |
+| `reassertMs` | `250` | daemon tick cadence |
+| `threadsReassertMs` / `glowReassertMs` | `500` / `750` | unchanged-lighting re-send rate (beats app repaints) |
+| `panesTtlMs` / `claudeScanMs` | `200` / `1500` | pane-list / `ps`-scan refresh — decoupled so cheap reads aren't paced by expensive ones |
+| `nudgeMs` / `nudgeFloorMs` | `25` / `100` | out-of-band repaint coalescing |
+| `staleSessionHours` | `12` | forget sessions older than this |
+| `actionCooldownMs` / `actionErrorMs` | `2500` / `8000` | action re-fire guard · error flash duration |
+| `debugReports` / `debugTurns` | `false` | `true` logs decoded notifications, `"raw"` adds hex · per-detent turn logging |
+
+</details>
+
+<details><summary><b>Files</b></summary>
 
 | Path | Role |
 |---|---|
-| `daemon.js` | the service: reads state, paints LEDs, dispatches key actions |
-| `bin/review.sh` | the review action: picks a target, runs it, writes the report |
-| `actions/<KEY>.json` | action state, written by runners, drives that key's LED |
-| `reports/` | saved review reports |
-| `hook.py` | Claude Code hook; records session status + tmux pane |
-| `config.json` | slots, colors, cadence, brightness (hot-reloaded) |
+| `daemon.js` | the service: state, LEDs, key dispatch, control API, game server |
+| `cli.js` | the configurator (`claude-micro` on PATH) |
+| `hook.py` | Claude Code hook → `state.json` |
+| `config.json` / `actions.json` | per-machine config / reusable action library |
+| `game/drift.js` · `game/index.html` | the game — terminal and browser editions |
+| `bin/review.sh` | headless review runner |
 | `extract-sdk.js` | regenerates `lib/` from the installed ChatGPT.app |
-| `patch-settings.py` | adds the hooks to `~/.claude/settings.json` (idempotent) |
-| `install.sh` | all of the above + the LaunchAgent |
-| `state.json` | runtime session state (written by `hook.py`) |
-| `daemon.log` | what the daemon is doing |
+| `make-app.sh` / `patch-settings.py` / `install.sh` | app bundle · hook wiring · everything |
+| `state.json` / `daemon.log` / `actions/` | runtime state, logs, action-key state |
 
-`lib/` is generated, never vendored — it is extracted from the copy of
-ChatGPT.app already on this machine.
+`lib/` is generated, never vendored — extracted from the ChatGPT.app already
+on the machine.
 
-## macOS Input Monitoring
+</details>
 
-Opening a HID keyboard interface requires **Input Monitoring**. A process
-started by launchd holds no grant and cannot prompt for one, so it fails with
-`cannot open device …` while the very same code run from a terminal works — the
-terminal already has the grant and children inherit it. This is the one piece
-that can't be automated:
+**Operating it:**
 
-    System Settings -> Privacy & Security -> Input Monitoring -> +
-    add:  ~/.claude/micro/ClaudeMicro.app
-    then: launchctl kickstart -k gui/$UID/com.vpid.claude-micro
-
-`ClaudeMicro.app` exists only to be the thing you grant. Its executable is a
-**hard link** to the `node` binary, so the grant is scoped to this daemon
-instead of to every script `node` will ever run, and it survives nvm replacing
-its own node. `make-app.sh` rebuilds it; re-granting is only needed if the
-bundle is recreated from a different node.
-
-## Operating it
-
-    ~/.claude/micro/install.sh                          # install or repair
-    tail -f ~/.claude/micro/daemon.log                  # watch it work
-    launchctl bootout gui/$UID/com.vpid.claude-micro    # stop
-    launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.vpid.claude-micro.plist
-
-Re-run `install.sh` after a **ChatGPT.app update** (the SDK is re-extracted) or
-a **Node upgrade** (the plist pins an absolute `node` path).
-
-### Config
-
-- `slots` — which agent keys to own, `[0, 1, 2, 3]`. Position in this array
-  selects the tmux target, so `slots[0]` gets the first pane. Hot-reloaded;
-  also update which keys you leave unassigned in the app.
-- `target` — `"panes"` (default) or `"windows"`, if you'd rather the keys map to
-  the first four tmux windows.
-- `inactiveDim` / `highlightActive` — how much to dim keys that aren't the pane
-  you're in. Set `highlightActive: false` for uniform brightness.
-- `tmuxSocket` — normally left `null`; the socket is learned from the sessions
-  themselves.
-- `reassertMs` — repaint cadence, `250`. Raising it saves device battery but
-  lets the app's repaints show through for longer.
-- `brightness` — `0`–`1`.
-- `focusApp` — app to bring forward on a press, e.g. `"Ghostty"`. `null` means
-  work it out from the tmux client's process tree, which is usually right.
-- `focusTerminal` — `false` leaves macOS window focus alone and only moves tmux.
-- `pressDebounceMs` — chatter guard, `60`. Must stay well under `doublePressMs`,
-  or the second press of a double is swallowed as a repeat.
-- `doublePressMs` — how long a double press has to arrive in, `600`.
-- `doublePress` — `"zoom"` or `"none"`.
-- `knobs` — see [The knobs](#the-knobs). Per side: `key` / `cw` / `ccw` name the
-  controls, `turn` is `"mode"` or `"none"`, `click` is `"model"` or `"none"`,
-  `openKey` and `confirm` override the keys sent (`M-p`, `s`).
-- `modeCycle` — how many permission modes a Shift+Tab lap has, `4`. Getting this
-  wrong reverses nothing and skips instead.
-- `pickerIdleMs` / `knobClickMs` — how long an untouched model list counts as
-  still open (`15000`), and the click debounce (`300`).
-- `panesTtlMs` / `claudeScanMs` — how often the pane list and the `ps` scan are
-  re-read, `200` and `1500`.
-- `threadsReassertMs` — how often unchanged key lighting is re-sent to beat the
-  app's repaints, `500`. Changes are always sent immediately.
-- `nudgeMs` — coalescing delay for an out-of-band repaint, `25`.
-- `debugReports` — `true` logs decoded notifications, `"raw"` adds hex.
-- `statusStyle` — per-status color (packed RGB int), `effect`
-  (`off`/`solid`/`snake`/`rainbow`/`breath`/`gradient`/`shallowBreath`) and
-  `speed` (`0`–`1`).
+```bash
+claude-micro                                     # configure interactively
+tail -f ~/.claude/micro/daemon.log               # watch it work
+launchctl bootout gui/$UID/com.claude-micro      # stop
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.claude-micro.plist
+./install.sh                                     # repair · after ChatGPT.app or Node updates
+```
 
 ## Limits
 
-- **A session that has never fired a hook shows `idle`, not its real state.**
-  Process detection proves a session is *there*, not what it's doing; the real
-  status arrives with its next prompt or turn end.
-- **Only one daemon may run.** A second instance fights the first for the same
-  RPC channel, which surfaces as write failures and doubled key presses rather
-  than as anything obviously wrong. A pidfile guard enforces it; stop the
-  running one via `kill $(cat ~/.claude/micro/daemon.pid)`.
-- **Pane order shifts if you restructure the window.** Positions are recomputed
-  from tmux geometry every second, so splitting or closing panes reshuffles
-  which key points where.
-- **`error` is never emitted.** Claude Code has no hook that cleanly signals a
-  failed turn; the color is wired up and waiting for one.
-- **`unread` clears on a key press, not when you actually read the pane.**
-  Reading a session by switching to it any other way leaves the light on until
-  the next hook event.
-- **Presses are only read while the daemon is connected.** If the device is
-  asleep, the first press wakes it and is consumed by the wake — press again.
-- **`hook.py` records `TMUX_PANE` per session.** A Claude session not running
-  under tmux gets a light but a press can't focus it.
+- **A session that has never fired a hook shows `idle`**, not its real
+  state — process detection proves it's there, not what it's doing.
+- **Only one daemon may run** (pidfile-guarded) — a second fights the first
+  for the RPC channel and surfaces as write failures and doubled presses.
+- **Positional keys reshuffle if you restructure the window** — that's what
+  [pinning](#guide-connecting-your-tmux-setup) is for.
+- **`unread` clears on a key press**, not when you read the pane some other
+  way.
+- **A sleeping device eats the first press** as its wake — press again.
+- **Sessions outside tmux** get a light, but a press can't focus them.
+
+---
+
+<div align="center">
+
+*Built by driving it — every field note above was hit, diagnosed, and fixed
+on real hardware in real sessions.*
+
+</div>
