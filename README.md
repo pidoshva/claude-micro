@@ -29,6 +29,26 @@ Per-machine settings live in `~/.claude/micro/config.json` (created from
 `config.example.json`, never overwritten by reinstalls, hot-reloaded by the
 daemon).
 
+## The configurator: `claude-micro`
+
+The installer puts `claude-micro` on your PATH — an interactive CLI for the
+whole setup, no JSON editing required:
+
+- **Keys** — assign any of the 13 keys: jump-to-pane, review, approve/deny,
+  or any slash command / skill / custom prompt (it lists your installed
+  skills). *Identify mode* asks you to press the physical key you mean.
+- **Colors** — per-status color, effect, speed, brightness — every edit is
+  **previewed live on the device's LEDs**, because tuning a color by hex code
+  is not tuning a color.
+- **Knob** — turn/click behavior, mode-cycle length, model-confirm scope.
+- **Test** — fire any key's action from the CLI through the daemon's real
+  dispatch path, and see the daemon log's verdict inline.
+
+Everything saves straight to `config.json`, which the daemon hot-reloads —
+there is no apply step. The CLI talks to the daemon over its localhost
+control API (`/state`, `/next-press`, `/press`, `/preview`), so the daemon
+remains the only process touching the device.
+
 ---
 
 Turns the Codex Micro's first four agent keys into a **tmux switcher lit by

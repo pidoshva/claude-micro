@@ -31,7 +31,7 @@ fi
 
 echo "==> copying files into $DEST"
 mkdir -p "$DEST/bin" "$DEST/game" "$DEST/actions"
-cp "$SRC/daemon.js" "$SRC/hook.py" "$SRC/extract-sdk.js" "$SRC/make-app.sh" "$SRC/patch-settings.py" "$DEST/"
+cp "$SRC/daemon.js" "$SRC/cli.js" "$SRC/hook.py" "$SRC/extract-sdk.js" "$SRC/make-app.sh" "$SRC/patch-settings.py" "$DEST/"
 cp "$SRC/bin/review.sh" "$DEST/bin/"
 cp "$SRC/game/drift.js" "$SRC/game/index.html" "$DEST/game/"
 cp "$SRC/README.md" "$DEST/"
@@ -39,6 +39,14 @@ if [ ! -f "$DEST/config.json" ]; then
   cp "$SRC/config.example.json" "$DEST/config.json"
   echo "==> wrote default config.json (edit key/knob assignments there)"
 fi
+
+echo "==> installing the configurator (claude-micro on your PATH)"
+mkdir -p "$HOME/.local/bin"
+cat > "$HOME/.local/bin/claude-micro" <<SHIM
+#!/bin/bash
+exec "$NODE_BIN" "$DEST/cli.js" "\$@"
+SHIM
+chmod +x "$HOME/.local/bin/claude-micro"
 
 echo "==> installing skills into $SKILLS"
 for skill in btw research ship; do
@@ -107,5 +115,6 @@ Installed. Two manual steps remain -- macOS will not let a script do them:
    owns UNASSIGNED. The app repaints keys it thinks it owns and will fight
    the daemon for them; unassigned keys are painted off and left alone.
 
-Then read $DEST/README.md -- key map, knob, joystick, and the game.
+Then run \`claude-micro\` to assign keys and tune colors interactively,
+and read $DEST/README.md -- key map, knob, joystick, and the game.
 DONE

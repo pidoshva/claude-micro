@@ -528,6 +528,20 @@ function onControl(params) {
   // A control that doesn't name itself is still worth reporting: some firmware
   // numbers its encoders in another field, and the payload says which.
   if (typeof key !== 'string') return reportUnknown('(unnamed)', params);
+
+  // The CLI's "press the key you want to configure": the next press answers
+  // the long-poll and goes nowhere else -- identifying a key must not also
+  // fire its action.
+  if (pressWaiter && params.act !== 0) {
+    const w = pressWaiter;
+    pressWaiter = null;
+    clearTimeout(w.timer);
+    try {
+      w.res.writeHead(200, { 'Content-Type': 'application/json' });
+      w.res.end(JSON.stringify({ k: key, act: params.act ?? 1 }));
+    } catch {}
+    return;
+  }
   if (/^(AG0[0-5]|ACT(0[6-9]|1[0-2]))$/.test(key)) return onKey(key, params.act);
 
   const side = knobSideFor(key);
@@ -1231,6 +1245,16 @@ function joyTick() {
   }
 }
 
+/** The CLI's press-identify long-poll, and a temporary lighting override. */
+let pressWaiter = null;
+let preview = null;                    // { items, until }
+
+function readBody(req, cb) {
+  let data = '';
+  req.on('data', c => { data += c; if (data.length > 65536) req.destroy(); });
+  req.on('end', () => { try { cb(JSON.parse(data)); } catch { cb(null); } });
+}
+
 function gameServer() {
   if (joy.server) return Promise.resolve(joy.server);
   const http = require('http');
@@ -1274,6 +1298,51 @@ function gameServer() {
       res.writeHead(204); res.end();
       // The page shows its explosion before the window goes away.
       setTimeout(() => endGame('crashed'), 900);
+      return;
+    }
+
+    // ---- control API: what the configurator CLI talks to ----------------
+    if (req.method === 'GET' && req.url === '/state') {
+      const slots = assignSlots().map(s => ({
+        name: s.name, action: s.action, label: s.label || null,
+        kind: s.kind, index: s.index ?? null,
+        target: s.kind === 'tmux' && s.target
+          ? `${s.target.session}:${s.target.windowIndex}.${s.target.paneIndex}` : null,
+        status: statusOf(s),
+      }));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ connected: dev.connected, config, slots }));
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/press') {
+      readBody(req, body => {
+        if (!body || typeof body.k !== 'string') { res.writeHead(400); res.end(); return; }
+        onControl({ k: body.k, act: body.act ?? 1 });
+        res.writeHead(204); res.end();
+      });
+      return;
+    }
+    if (req.method === 'GET' && req.url.startsWith('/next-press')) {
+      // Long-poll: the next physical control event answers, and is SWALLOWED
+      // rather than routed -- "press the key you want to configure" must not
+      // also fire that key's action.
+      if (pressWaiter) { try { pressWaiter.res.writeHead(409); pressWaiter.res.end(); } catch {} }
+      const timer = setTimeout(() => {
+        if (pressWaiter && pressWaiter.res === res) { pressWaiter = null; }
+        try { res.writeHead(204); res.end(); } catch {}
+      }, 30000);
+      timer.unref();
+      pressWaiter = { res, timer };
+      req.on('close', () => { if (pressWaiter && pressWaiter.res === res) pressWaiter = null; });
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/preview') {
+      readBody(req, body => {
+        if (!body || !Array.isArray(body.items)) { res.writeHead(400); res.end(); return; }
+        preview = { items: body.items, until: Date.now() + Math.min(15000, body.ms || 2500) };
+        nudge();
+        res.writeHead(204); res.end();
+      });
       return;
     }
     res.writeHead(404); res.end();
@@ -1361,6 +1430,21 @@ function endGame(reason) {
   nudge();
 }
 
+function previewOverlay() {
+  if (!preview) return null;
+  if (Date.now() > preview.until) { preview = null; nudge(); return null; }
+  return [0, 1, 2, 3, 4, 5].map(id => {
+    const item = preview.items.find(i => i.id === id) || preview.items.find(i => i.id === undefined);
+    if (!item) return OFF(id);
+    return {
+      id, color: Number(item.color) || 0,
+      brightness: Math.max(0, Math.min(1, item.brightness ?? 1)),
+      effect: FX[item.effect] ?? FX.solid, speed: item.speed ?? 0,
+      syncKeysLighting: false, syncAmbientLighting: false,
+    };
+  });
+}
+
 function joyOverlay() {
   if (joy.game) {
     return [0, 1, 2, 3, 4, 5].map(id =>
@@ -1435,10 +1519,10 @@ async function paint() {
   if (dev.writing) { dev.paintPending = true; return; }
   const assigned = assignSlots();
 
-  // The joystick borrows the whole agent row while it matters: a charge in
-  // progress draws as a bar filling left to right, and a running game turns
-  // the row rainbow. Session state comes back the moment either ends.
-  const overlay = joyOverlay();
+  // Overlay priority: a CLI color preview beats everything (that's the point
+  // of previewing), then the joystick's charge bar / game rainbow, then
+  // session state, which comes back the moment the others end.
+  const overlay = previewOverlay() || joyOverlay();
 
   // Only the agent row (0-5) has per-key LEDs; ACT keys act without lighting.
   const threads = overlay || assigned.filter(slot => slot.slotId <= 5).map(slot => {
@@ -1681,6 +1765,11 @@ function main() {
       }
     });
   } catch (e) { log('cannot watch the config directory; falling back to the tick:', e.message); }
+
+  // The control server doubles as the game server; it exists from boot so the
+  // CLI can always reach the daemon, not only after a game has run.
+  gameServer().then(() => log(`control server on 127.0.0.1:${config.joystick.gamePort}`))
+    .catch(e => log('control server failed to start:', e.message));
 
   setInterval(tick, config.reassertMs);
   tick();
