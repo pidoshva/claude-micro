@@ -25,6 +25,15 @@ const HERE = __dirname;
 const CONFIG_FILE = path.join(HERE, 'config.json');
 const SKILLS_DIR = path.join(os.homedir(), '.claude/skills');
 
+// Hand off to the Bubble Tea edition when it's built, whatever entry point
+// got us here -- an old shim, an alias, a bare `node cli.js`. This file stays
+// the fallback for machines without Go; MICRO_NODE_CLI=1 forces it.
+const TUI = path.join(HERE, 'claude-micro-tui');
+if (!process.env.MICRO_NODE_CLI && fs.existsSync(TUI)) {
+  const r = require('child_process').spawnSync(TUI, process.argv.slice(2), { stdio: 'inherit' });
+  process.exit(r.status ?? 0);
+}
+
 const KEY_NAMES = ['AG00', 'AG01', 'AG02', 'AG03', 'AG04', 'AG05',
                    'ACT06', 'ACT07', 'ACT08', 'ACT09', 'ACT10', 'ACT11', 'ACT12'];
 const EFFECTS = ['solid', 'breath', 'snake', 'rainbow', 'gradient', 'shallowBreath', 'off'];
