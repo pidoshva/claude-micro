@@ -123,6 +123,59 @@ AG05 — currently: standup (/btw)
 | `deny` | `{ "action": "deny", "cooldownMs": 700 }` | Esc on the visible dialog — same guard |
 | `none` | `{ "action": "none" }` | leaves the key to the ChatGPT app |
 
+### Custom actions: your own commands and keystrokes
+
+Beyond the built-ins, two custom formats let a key do anything:
+
+**`command`** — run a shell command on press:
+
+```json
+{ "action": "command", "label": "deploy", "run": "~/bin/deploy.sh staging", "window": true }
+```
+
+`window: true` opens it in a focused tmux window (interactive things, things
+you want to watch); without it the command runs detached — outcome logged,
+red flash on failure. Context arrives as environment, so scripts can act on
+where you were when you pressed:
+
+| Variable | Value |
+|---|---|
+| `MICRO_KEY` | the key that fired (`ACT10`) |
+| `MICRO_PANE` | active tmux pane id (`%3`) |
+| `MICRO_PANE_PATH` | that pane's working directory |
+| `MICRO_SESSION` | that pane's tmux session name |
+
+**`keys`** — send raw keystrokes to the focused pane, in tmux `send-keys`
+syntax:
+
+```json
+{ "action": "keys", "label": "transcript", "keys": ["C-o"] }
+```
+
+Wire any binding the pane's program already understands — Claude Code's
+`C-o` (transcript), `M-t` (thinking toggle), or whatever your vim config
+answers to.
+
+**The action library** — define a custom action once in
+`~/.claude/micro/actions.json`, reuse it on any key with a reference:
+
+```json
+// actions.json
+{ "deploy-staging": { "action": "command", "run": "~/bin/deploy.sh staging",
+                      "window": true, "description": "deploy current repo" } }
+
+// config.json, any key:
+"ACT10": { "use": "deploy-staging" }
+```
+
+Library entries appear in the CLI's key editor (marked ⚡) with their
+descriptions, editing the library propagates to every key referencing it,
+and both files hot-reload. Fields set directly on a key override the
+library's. In the CLI, after building a custom action you're offered "save
+to the action library under a name" — that's how entries get created without
+touching JSON. An install ships `actions.json` with two `__example-*`
+entries to copy from.
+
 ### Where skills live, and how buttons find them
 
 A **skill** is a folder with a `SKILL.md` — the prompt/instructions a slash

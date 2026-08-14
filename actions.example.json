@@ -1,0 +1,14 @@
+{
+  "__example-deploy": {
+    "action": "command",
+    "label": "deploy",
+    "run": "~/bin/deploy.sh staging",
+    "window": true,
+    "description": "example: run a script in a tmux window (rename me, drop the __)"
+  },
+  "__example-transcript": {
+    "action": "keys",
+    "keys": ["C-o"],
+    "description": "example: toggle Claude Code's transcript view"
+  }
+}

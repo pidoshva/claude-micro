@@ -39,6 +39,9 @@ if [ ! -f "$DEST/config.json" ]; then
   cp "$SRC/config.example.json" "$DEST/config.json"
   echo "==> wrote default config.json (edit key/knob assignments there)"
 fi
+if [ ! -f "$DEST/actions.json" ]; then
+  cp "$SRC/actions.example.json" "$DEST/actions.json"
+fi
 
 echo "==> installing the configurator (claude-micro on your PATH)"
 mkdir -p "$HOME/.local/bin"

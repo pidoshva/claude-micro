@@ -104,6 +104,18 @@ function loadConfig() {
  *
  * The older flat `slots` array still works, and is read as four tmux keys.
  */
+/**
+ * The reusable action library: actions.json next to config.json, one named
+ * custom action per entry. A key wires one up with { "use": "<name>" }, so
+ * editing the library propagates to every key that references it. Hot-reloaded
+ * by the same directory watcher as the config.
+ */
+let actionsLibrary = {};
+function loadActionsLibrary() {
+  try { actionsLibrary = JSON.parse(fs.readFileSync(path.join(HERE, 'actions.json'), 'utf8')); }
+  catch { actionsLibrary = {}; }
+}
+
 function keyEntries() {
   if (config.keys && typeof config.keys === 'object') {
     return Object.entries(config.keys)
@@ -111,7 +123,11 @@ function keyEntries() {
         // Agent keys AG00-AG05 and action keys ACT06-ACT12; the number doubles
         // as the LED id, which only exists for the agent row (0-5).
         const m = /^(?:AG0([0-5])|ACT(0[6-9]|1[0-2]))$/.exec(name);
-        if (!m || !entry || !entry.action || entry.action === 'none') return null;
+        if (!m || !entry) return null;
+        // { "use": "<name>" } pulls the definition from the library; anything
+        // set directly on the key wins over the library's fields.
+        if (entry.use && actionsLibrary[entry.use]) entry = { ...actionsLibrary[entry.use], ...entry };
+        if (!entry.action || entry.action === 'none') return null;
         return { ...entry, name, slotId: Number(m[1] ?? m[2]) };
       })
       .filter(Boolean)
@@ -722,6 +738,64 @@ const ACTIONS = {
   // first option regardless of what I just pointed at".
   approve(slot) { return answerDialog(slot, 'Enter', 'approve'); },
   deny(slot) { return answerDialog(slot, 'Escape', 'deny'); },
+
+  /**
+   * Custom action: run a shell command. `window: true` opens it in a focused
+   * tmux window (interactive things, things you want to watch); otherwise it
+   * runs detached with its outcome logged. Context arrives as environment:
+   *
+   *   MICRO_KEY        the key that fired
+   *   MICRO_PANE       active tmux pane id (%N)
+   *   MICRO_PANE_PATH  that pane's working directory
+   *   MICRO_SESSION    that pane's tmux session name
+   */
+  async command(slot) {
+    const run = String(slot.run || '').trim();
+    if (!run) return actionError(slot, `no command configured for ${slot.name}`);
+    const active = targets.list.find(t => t.active);
+    const env = {
+      ...process.env, MICRO_KEY: slot.name,
+      MICRO_PANE: active ? active.id : '', MICRO_PANE_PATH: active ? active.path : '',
+      MICRO_SESSION: active ? active.session : '',
+    };
+
+    if (slot.window) {
+      const r = await tmux(['new-window', '-n', slot.label || 'micro',
+        `MICRO_KEY=${slot.name} MICRO_PANE=${env.MICRO_PANE} MICRO_PANE_PATH=${JSON.stringify(env.MICRO_PANE_PATH)} MICRO_SESSION=${JSON.stringify(env.MICRO_SESSION)} ${run}`]);
+      if (!r.ok) return actionError(slot, `could not open window: ${r.err}`);
+      log(`press ${slot.name}: "${run}" in a tmux window`);
+      writeActionState(slot, 'idle', slot.label || 'command');
+      return;
+    }
+
+    const { execFile: run2 } = require('child_process');
+    run2('bash', ['-lc', run], { env, cwd: env.MICRO_PANE_PATH || process.env.HOME, timeout: 120000 },
+      (err, stdout, stderr) => {
+        if (err) {
+          actionError(slot, `"${run}" failed: ${(stderr || err.message).trim().slice(0, 120)}`);
+        } else {
+          log(`press ${slot.name}: "${run}" ok${stdout.trim() ? ` -- ${stdout.trim().slice(0, 120)}` : ''}`);
+          writeActionState(slot, 'idle', slot.label || 'command');
+        }
+      });
+  },
+
+  /**
+   * Custom action: send raw keystrokes to the focused pane, in tmux send-keys
+   * syntax (C-o, M-t, Enter, Escape, F5, or literal text). For wiring device
+   * keys to any binding Claude Code -- or whatever else lives in the pane --
+   * already understands.
+   */
+  async keys(slot) {
+    const keys = Array.isArray(slot.keys) ? slot.keys : [];
+    if (!keys.length) return actionError(slot, `no keys configured for ${slot.name}`);
+    const active = targets.list.find(t => t.active);
+    if (!active) return actionError(slot, 'no active tmux pane');
+    const r = await tmux(['send-keys', '-t', active.id, ...keys.map(String)]);
+    if (!r.ok) return actionError(slot, `send-keys failed: ${r.err}`);
+    log(`press ${slot.name}: sent ${keys.join(' ')} -> ${active.id}`);
+    writeActionState(slot, 'idle', slot.label || 'keys');
+  },
 
   /**
    * Type a canned prompt into the focused pane's Claude session and submit it.
@@ -1336,7 +1410,7 @@ function gameServer() {
         hasClaude: t.hasClaude, active: t.active,
       }));
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ connected: dev.connected, config, slots, panes }));
+      res.end(JSON.stringify({ connected: dev.connected, config, slots, panes, actionsLibrary }));
       return;
     }
     if (req.method === 'POST' && req.url === '/press') {
@@ -1761,6 +1835,7 @@ function claimSingleInstance() {
 function main() {
   rotateLog();
   loadConfig();
+  loadActionsLibrary();
   claimSingleInstance();
   log(`claude-micro starting: target=${config.target} reassert=${config.reassertMs}ms\n` +
       `  keys: ${keyEntries().map(e => `${e.name}=${e.action}` +
@@ -1780,8 +1855,9 @@ function main() {
    */
   try {
     fs.watch(HERE, { persistent: false }, (_event, name) => {
-      if (name === path.basename(CONFIG_FILE)) {
+      if (name === path.basename(CONFIG_FILE) || name === 'actions.json') {
         loadConfig();
+        loadActionsLibrary();
         log(`config reloaded: ${keyEntries().map(e => `${e.name}=${e.action}`).join(' ')}` +
             `${config.knobs.left.key || config.knobs.left.cw ? ' knob=on' : ''}`);
         nudge({ rescan: true });

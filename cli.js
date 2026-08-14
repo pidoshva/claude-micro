@@ -291,16 +291,67 @@ function listSkills() {
 
 // ---------------------------------------------------------------- screens
 
+function readActionsLibrary() {
+  try { return JSON.parse(fs.readFileSync(path.join(HERE, 'actions.json'), 'utf8')); }
+  catch { return {}; }
+}
+
+function writeActionsLibrary(lib) {
+  const file = path.join(HERE, 'actions.json');
+  fs.writeFileSync(file + '.tmp', JSON.stringify(lib, null, 2) + '\n');
+  fs.renameSync(file + '.tmp', file);
+}
+
 function describeKey(entry) {
-  if (!entry || entry.action === 'none' || !entry.action) return `${C.dim}unassigned (ChatGPT app)${C.reset}`;
+  if (!entry) return `${C.dim}unassigned (ChatGPT app)${C.reset}`;
+  if (entry.use) {
+    const lib = readActionsLibrary();
+    const def = lib[entry.use];
+    return def ? `${entry.use} ${C.dim}(library: ${describeKey(def)})${C.reset}`
+               : `${C.red}${entry.use} — missing from actions.json${C.reset}`;
+  }
+  if (entry.action === 'none' || !entry.action) return `${C.dim}unassigned (ChatGPT app)${C.reset}`;
   const by = {
     tmux: () => entry.target ? `pinned to ${entry.target}` : `jump to pane ${entry.index + 1}`,
     review: () => `review (/code-review ${entry.effort || 'high'})`,
     prompt: () => `${entry.label || 'prompt'} (${(entry.text || '').slice(0, 30)})`,
     approve: () => 'approve dialogs',
     deny: () => 'deny dialogs',
+    command: () => `run: ${(entry.run || '').slice(0, 34)}${entry.window ? ' (window)' : ''}`,
+    keys: () => `send keys: ${(entry.keys || []).join(' ').slice(0, 30)}`,
   };
   return (by[entry.action] || (() => entry.action))();
+}
+
+/** Interactive builders for the two custom formats. Return an entry or null. */
+async function buildCommandAction() {
+  const run = await input('Shell command (runs via bash -lc; $MICRO_PANE, $MICRO_PANE_PATH, $MICRO_SESSION, $MICRO_KEY are set):');
+  if (!run) return null;
+  const where = await menu('Where should it run?', [
+    { label: 'Detached', hint: 'silent; outcome logged, red flash on failure', value: false },
+    { label: 'In a tmux window', hint: 'opens focused; for interactive or watch-it things', value: true },
+  ]);
+  if (where === null) return null;
+  const label = await input('Short label (shows on the device map):', run.split(/\s/)[0].split('/').pop());
+  return { action: 'command', label: label || 'command', run, ...(where ? { window: true } : {}) };
+}
+
+async function buildKeysAction() {
+  const seq = await input('Keys in tmux send-keys syntax, space-separated (e.g. "C-o" or "M-t" or "Escape"):');
+  if (!seq) return null;
+  const label = await input('Short label:', seq.split(/\s+/)[0]);
+  return { action: 'keys', label: label || 'keys', keys: seq.split(/\s+/) };
+}
+
+/** Offer to promote an inline custom action into the reusable library. */
+async function maybeSaveToLibrary(entry) {
+  const name = await input('Save to the action library under a name? (empty = just this key):');
+  if (!name) return entry;
+  const lib = readActionsLibrary();
+  lib[name] = { ...entry, description: entry.label || name };
+  writeActionsLibrary(lib);
+  await flash(`library: ${name} saved — reusable on any key as {"use": "${name}"}`);
+  return { use: name };
 }
 
 async function keysScreen() {
@@ -342,9 +393,16 @@ async function keyEditor(name) {
   while (true) {
     const config = readConfig();
     const current = describeKey(config.keys[name]);
+    const library = readActionsLibrary();
+    const libraryItems = Object.entries(library).map(([n, def]) => ({
+      label: `⚡ ${n}`, hint: def.description || describeKey(def), value: `__lib:${n}`,
+    }));
     const choice = await menu(`${name} — currently: ${current}`, [
       { label: 'Jump to a tmux pane…', hint: 'by position, or pinned to an exact pane', value: 'tmux' },
       { label: 'Slash command / prompt…', hint: 'a skill or custom text, typed into the focused session', value: 'prompt' },
+      { label: 'Custom: run a command…', hint: 'any shell command, detached or in a tmux window', value: 'command' },
+      { label: 'Custom: send keys…', hint: 'raw keystrokes to the focused pane (C-o, M-t, ...)', value: 'keys' },
+      ...libraryItems,
       { label: 'Review', hint: '/code-review on the focused session', value: 'review' },
       { label: 'Approve dialogs', hint: 'Enter on the highlighted option', value: 'approve' },
       { label: 'Deny dialogs', hint: 'Esc on the dialog', value: 'deny' },
@@ -354,6 +412,21 @@ async function keyEditor(name) {
     if (choice === null) return;
 
     if (choice === '__test') { await testKey(name); continue; }
+
+    if (choice.startsWith('__lib:')) {
+      config.keys[name] = { use: choice.slice(6) };
+      writeConfig(config);
+      await flash(`saved — ${name} is now: ${describeKey(config.keys[name])} (daemon hot-reloads)`);
+      return;
+    }
+    if (choice === 'command' || choice === 'keys') {
+      const built = choice === 'command' ? await buildCommandAction() : await buildKeysAction();
+      if (!built) continue;
+      config.keys[name] = await maybeSaveToLibrary(built);
+      writeConfig(config);
+      await flash(`saved — ${name} is now: ${describeKey(config.keys[name])} (daemon hot-reloads)`);
+      return;
+    }
 
     if (choice === 'tmux') {
       const how = await menu('How should this key find its pane?', [
