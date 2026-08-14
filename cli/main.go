@@ -868,73 +868,93 @@ func swatch(c int) string {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(fmt.Sprintf("#%06x", c))).Render("██")
 }
 
+func capColor(m model, name string) (lipgloss.Color, bool) {
+	if m.state == nil {
+		return dimColor, false
+	}
+	for _, s := range m.state.Slots {
+		if s.Name != name || s.Status == nil {
+			continue
+		}
+		st, _ := m.cfg.StatusStyle()[*s.Status].(map[string]any)
+		if st == nil {
+			return dimColor, false
+		}
+		if *s.Status == "empty" {
+			return dimColor, false
+		}
+		return lipgloss.Color(fmt.Sprintf("#%06x", int(st["color"].(float64)))), true
+	}
+	return dimColor, false
+}
+
+// deviceMap draws the Micro as keycaps, each cap filled with its session's
+// live LED color -- the terminal mirror of the physical device.
 func (m model) deviceMap() string {
 	if m.state == nil {
-		return dimStyle.Render("(daemon unreachable — start it and this map goes live)")
+		return dimStyle.Render("  (daemon unreachable — start it and this comes alive)")
 	}
-	style := m.cfg.StatusStyle()
-	bySlot := map[string]Slot{}
-	for _, s := range m.state.Slots {
-		bySlot[s.Name] = s
-	}
-	var blocks []string
+	caps := make([]string, 0, 6)
 	for _, name := range KeyNames[:6] {
-		slot, ok := bySlot[name]
-		if !ok || slot.Status == nil {
-			blocks = append(blocks, dimStyle.Render("▒▒"))
-			continue
+		col, lit := capColor(m, name)
+		fill := "  "
+		style := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Padding(0, 1)
+		if lit {
+			fill = lipgloss.NewStyle().Foreground(col).Render("██")
+			style = style.BorderForeground(col)
 		}
-		st, _ := style[*slot.Status].(map[string]any)
-		if st == nil {
-			blocks = append(blocks, dimStyle.Render("▒▒"))
-			continue
-		}
-		c := int(st["color"].(float64))
-		b := swatch(c)
-		if *slot.Status == "empty" {
-			b = dimStyle.Render("··")
-		}
-		blocks = append(blocks, b)
+		caps = append(caps, style.Render(fill))
 	}
-	var actions []string
+	capsRow := lipgloss.JoinHorizontal(lipgloss.Top, caps...)
+	nums := "   1     2     3     4     5     6"
 	lib := m.library()
+	var actions []string
 	for i, name := range KeyNames[6:] {
 		entry, _ := m.cfg.Keys()[name].(map[string]any)
-		label := "·"
+		label := ""
 		if entry != nil {
 			if l, _ := entry["label"].(string); l != "" {
 				label = l
-			} else if a, _ := entry["action"].(string); a != "" && a != "none" {
-				label = a
 			} else if u, _ := entry["use"].(string); u != "" {
 				label = u
+			} else if a, _ := entry["action"].(string); a != "" && a != "none" {
+				label = a
 			}
 		}
 		_ = lib
-		if label == "·" {
-			actions = append(actions, dimStyle.Render(strconv.Itoa(i+7)+"·"))
+		num := lipgloss.NewStyle().Foreground(purple).Render(strconv.Itoa(i + 7))
+		if label == "" {
+			actions = append(actions, dimStyle.Render(strconv.Itoa(i+7)+"·—"))
 		} else {
-			actions = append(actions, dimStyle.Render(strconv.Itoa(i+7)+"·")+truncate(label, 9))
+			actions = append(actions, num+dimStyle.Render("·")+truncate(label, 8))
 		}
 	}
-	rows := []string{
-		strings.Join(blocks, " ") + "    " + cursorStyle.Render("◉") + " knob   " + cursorStyle.Render("✛") + " joystick",
-		dimStyle.Render("1  2  3  4  5  6"),
-		strings.Join(actions, "  "),
-	}
-	return strings.Join(rows, "\n")
+	extras := cursorStyle.Render("  ◉") + dimStyle.Render(" knob · mode/model   ") +
+		cursorStyle.Render("✛") + dimStyle.Render(" joystick · d-pad/game")
+	return capsRow + "\n" + dimStyle.Render(nums) + "\n\n " + strings.Join(actions, "  ") + "\n" + extras
 }
 
+var barStyle = lipgloss.NewStyle().Background(purple).Foreground(lipgloss.Color("#FFFFFF")).Bold(true).Padding(0, 1)
+var barDim = lipgloss.NewStyle().Background(lipgloss.Color("237")).Foreground(lipgloss.Color("250")).Padding(0, 1)
+
 func (m model) header() string {
-	status := warnStyle.Render("daemon NOT RUNNING") + dimStyle.Render(" · edits still save")
+	left := barStyle.Render("⌥ CLAUDE MICRO")
+	mid := barDim.Render("configurator")
+	daemon, device := "○ daemon", "○ device"
+	dstyle := lipgloss.NewStyle().Foreground(redCol)
+	vstyle := lipgloss.NewStyle().Foreground(redCol)
 	if m.state != nil {
-		dev := warnStyle.Render("asleep/away")
+		daemon = "● daemon"
+		dstyle = lipgloss.NewStyle().Foreground(greenCol)
 		if m.state.Connected {
-			dev = flashStyle.Render("connected")
+			device = "● device"
+			vstyle = lipgloss.NewStyle().Foreground(greenCol)
+		} else {
+			device = "◌ device asleep"
+			vstyle = lipgloss.NewStyle().Foreground(orangeCol)
 		}
-		status = flashStyle.Render("daemon up") + dimStyle.Render(" · device ") + dev
 	}
-	return titleStyle.Render("claude-micro") + " configurator   " + status
+	return left + mid + "  " + dstyle.Render(daemon) + "  " + vstyle.Render(device)
 }
 
 func (m model) titleFor(s screen) string {
