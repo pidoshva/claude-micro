@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 /**
  * claude-micro configurator -- an interactive CLI over the daemon's control
- * API. Assign actions to keys, tune status colors with a live preview on the
- * physical device, and test-fire any key without touching it.
+ * API. Assign actions to keys, connect keys to your own tmux layout, tune
+ * status colors with a live preview on the physical device, and test-fire any
+ * key without touching it.
  *
  * The daemon stays the single owner of the HID device; this talks to it over
  * localhost (the same server that hosts the game):
  *
- *   GET  /state       daemon + device + key assignments
+ *   GET  /state       daemon + device + assignments + live tmux pane map
  *   GET  /next-press  long-poll: the next physical press, swallowed not routed
  *   POST /press       synthesize a press through the real dispatch path
  *   POST /preview     temporary lighting override on the agent row
@@ -73,9 +74,22 @@ const C = {
   purple: '\x1b[38;5;135m', gray: '\x1b[38;5;246m', green: '\x1b[38;5;41m',
   orange: '\x1b[38;5;208m', red: '\x1b[38;5;203m',
 };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function rgb(colorInt, scale = 1) {
+  const r = Math.round(((colorInt >> 16) & 0xff) * scale);
+  const g = Math.round(((colorInt >> 8) & 0xff) * scale);
+  const b = Math.round((colorInt & 0xff) * scale);
+  return { r, g, b };
+}
+
+function block(colorInt, scale = 1) {
+  const { r, g, b } = rgb(colorInt, scale);
+  return `\x1b[38;2;${r};${g};${b}m██${C.reset}`;
+}
 
 function swatch(colorInt) {
-  const r = (colorInt >> 16) & 0xff, g = (colorInt >> 8) & 0xff, b = colorInt & 0xff;
+  const { r, g, b } = rgb(colorInt);
   return `\x1b[48;2;${r};${g};${b}m      ${C.reset}`;
 }
 
@@ -115,9 +129,17 @@ function startInput() {
   });
 }
 
-function readKey() {
+function readKey(timeoutMs) {
   if (keyQueue.length) return Promise.resolve(keyQueue.shift());
-  return new Promise(r => { keyWaiter = r; });
+  return new Promise(r => {
+    let timer = null;
+    const waiter = k => { if (timer) clearTimeout(timer); r(k); };
+    if (timeoutMs) {
+      timer = setTimeout(() => { if (keyWaiter === waiter) keyWaiter = null; r(null); }, timeoutMs);
+      timer.unref();
+    }
+    keyWaiter = waiter;
+  });
 }
 
 function quit() {
@@ -125,40 +147,109 @@ function quit() {
   process.exit(0);
 }
 
-function clear() { out.write('\x1b[2J\x1b[H'); }
-
-async function header() {
-  const state = await api('GET', '/state');
-  const daemon = state.status === 200;
-  const device = daemon && state.body.connected;
-  const line = daemon
-    ? `daemon ${C.green}up${C.reset} · device ${device ? C.green + 'connected' : C.orange + 'asleep/away'}${C.reset}`
-    : `daemon ${C.red}NOT RUNNING${C.reset} -- edits still save; preview/test need it`;
-  out.write(`${C.bold}${C.purple}claude-micro${C.reset} configurator   ${line}\n`);
-  out.write(C.dim + '─'.repeat(Math.min(70, out.columns || 70)) + C.reset + '\n');
-  return state.body;
+/**
+ * Home + draw + erase: repaints in place without the blank flash of a clear.
+ * Every line clears to EOL as it's drawn, or shorter lines leave the previous
+ * frame's tails visible to their right.
+ */
+function frame(content) {
+  out.write('\x1b[H' + content.split('\n').join('\x1b[K\n') + '\x1b[J');
 }
 
+async function withSpinner(text, promise) {
+  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  let done = false;
+  promise.then(() => { done = true; }, () => { done = true; });
+  let i = 0;
+  while (!done) {
+    out.write(`\r  ${C.purple}${frames[i++ % frames.length]}${C.reset} ${text} \x1b[K`);
+    await sleep(80);
+  }
+  out.write('\r\x1b[K');
+  return promise;
+}
+
+function flash(message, color = C.green) {
+  out.write(`\n  ${color}${message}${C.reset}\n`);
+  return sleep(1000);
+}
+
+// ---------------------------------------------------------------- device map
+
 /**
- * Arrow-key menu. items: { label, hint, value }. Returns value, or null on esc.
- * Number keys jump-select, which doubles as documentation of key positions.
+ * The main screen's centerpiece: the physical device drawn with each key in
+ * its LIVE color -- the terminal mirrors the LEDs, refreshed in place. Agent
+ * keys carry session state; the action row shows its assignments.
+ */
+function deviceMap(state) {
+  if (!state) return `  ${C.dim}(daemon unreachable -- start it and colors go live)${C.reset}\n`;
+  const config = readConfig();
+  const bySlot = Object.fromEntries(state.slots.map(s => [s.name, s]));
+
+  const agent = KEY_NAMES.slice(0, 6).map((name, i) => {
+    const slot = bySlot[name];
+    const style = slot && slot.status ? config.statusStyle[slot.status] : null;
+    const scale = slot && slot.status === 'empty' ? 0.25 : 1;
+    return style ? block(style.color, scale * (style.brightness ?? 1)) : `${C.dim}▒▒${C.reset}`;
+  });
+
+  const action = KEY_NAMES.slice(6).map((name, i) => {
+    const entry = config.keys[name];
+    const label = !entry || entry.action === 'none' ? '·'
+      : (entry.label || entry.action).slice(0, 8);
+    const n = i + 7;
+    return label === '·' ? `${C.dim}${n}·${C.reset}` : `${C.gray}${n}·${C.reset}${label}`;
+  });
+
+  const knob = config.knobs.left.turn === 'mode' ? `${C.purple}◉${C.reset} knob` : `${C.dim}◉${C.reset}`;
+  const joy = `${C.purple}✛${C.reset} joystick`;
+
+  return [
+    `   ${agent.join(' ')}    ${knob}   ${joy}`,
+    `   ${C.dim}1  2  3  4  5  6${C.reset}`,
+    `   ${action.join('  ')}`,
+    '',
+  ].join('\n');
+}
+
+function headerLine(state) {
+  const daemon = !!state;
+  const device = daemon && state.connected;
+  const status = daemon
+    ? `daemon ${C.green}up${C.reset} · device ${device ? C.green + 'connected' : C.orange + 'asleep/away'}${C.reset}`
+    : `daemon ${C.red}NOT RUNNING${C.reset} · edits still save`;
+  return `${C.bold}${C.purple}claude-micro${C.reset} configurator   ${status}\n` +
+         `${C.dim}${'─'.repeat(Math.min(72, out.columns || 72))}${C.reset}\n`;
+}
+
+// ---------------------------------------------------------------- menu
+
+/**
+ * Arrow-key menu. When opts.live is set, the screen re-renders every
+ * refreshMs with fresh daemon state -- that's what animates the device map.
  */
 async function menu(title, items, opts = {}) {
   let cursor = Math.max(0, opts.cursor || 0);
+  let state = null;
   while (true) {
-    clear();
-    await header();
-    out.write(`${C.bold}${title}${C.reset}\n\n`);
+    if (opts.live || state === null) {
+      const r = await api('GET', '/state', null, 900);
+      state = r.status === 200 ? r.body : null;
+    }
+    let s = headerLine(state);
+    if (opts.live) s += deviceMap(state) + '\n';
+    if (title) s += `${C.bold}${title}${C.reset}\n\n`;
     items.forEach((item, i) => {
       const sel = i === cursor;
       const marker = sel ? `${C.purple}❯${C.reset}` : ' ';
       const label = sel ? `${C.bold}${item.label}${C.reset}` : item.label;
-      out.write(`  ${marker} ${label}${item.hint ? `  ${C.dim}${item.hint}${C.reset}` : ''}\n`);
+      s += `  ${marker} ${label}${item.hint ? `  ${C.dim}${item.hint}${C.reset}` : ''}\n`;
     });
-    out.write(`\n${C.dim}${opts.footer || '↑↓ move · enter select · esc back'}${C.reset}\n`);
-    out.write('\x1b[?25l');
+    s += `\n${C.dim}${opts.footer || '↑↓ move · enter select · esc back'}${C.reset}\n`;
+    frame(s + '\x1b[?25l');
 
-    const k = await readKey();
+    const k = await readKey(opts.live ? 600 : undefined);
+    if (k === null) continue;                          // live refresh tick
     if (k === '\x1b[A') cursor = (cursor - 1 + items.length) % items.length;
     else if (k === '\x1b[B') cursor = (cursor + 1) % items.length;
     else if (k === '\r' || k === '\n') return items[cursor].value;
@@ -168,7 +259,7 @@ async function menu(title, items, opts = {}) {
 }
 
 async function input(promptText, initial = '') {
-  out.write(`\n${promptText}\n${C.purple}❯ ${C.reset}\x1b[?25h${initial}`);
+  out.write(`\n  ${promptText}\n  ${C.purple}❯ ${C.reset}\x1b[?25h${initial}`);
   let text = initial;
   while (true) {
     const k = await readKey();
@@ -180,11 +271,6 @@ async function input(promptText, initial = '') {
       text += k; out.write(k);
     }
   }
-}
-
-function flash(message) {
-  out.write(`\n${C.green}${message}${C.reset}\n`);
-  return new Promise(r => setTimeout(r, 900));
 }
 
 // ---------------------------------------------------------------- skills
@@ -208,7 +294,7 @@ function listSkills() {
 function describeKey(entry) {
   if (!entry || entry.action === 'none' || !entry.action) return `${C.dim}unassigned (ChatGPT app)${C.reset}`;
   const by = {
-    tmux: () => `jump to pane ${entry.index + 1}`,
+    tmux: () => entry.target ? `pinned to ${entry.target}` : `jump to pane ${entry.index + 1}`,
     review: () => `review (/code-review ${entry.effort || 'high'})`,
     prompt: () => `${entry.label || 'prompt'} (${(entry.text || '').slice(0, 30)})`,
     approve: () => 'approve dialogs',
@@ -226,18 +312,30 @@ async function keysScreen() {
       value: name,
     }));
     items.push({ label: '⊙ identify — press a key on the device', value: '__identify' });
-    const choice = await menu('Keys', items, { footer: '↑↓ move · enter edit · esc back' });
+    const choice = await menu('Keys', items, { footer: '↑↓ move · enter edit · 1-9 jump · esc back' });
     if (choice === null) return;
     if (choice === '__identify') {
-      out.write(`\n${C.orange}press any key on the Micro (30s)...${C.reset}\n`);
-      const r = await api('GET', '/next-press', null, 31000);
+      const r = await withSpinner(`${C.orange}press any key on the Micro...${C.reset} (30s, esc on the device won't help)`,
+        api('GET', '/next-press', null, 31000));
       if (r.status === 200 && r.body && KEY_NAMES.includes(r.body.k)) await keyEditor(r.body.k);
-      else if (r.status === 200 && r.body) await flash(`that was ${r.body.k} — a knob/joystick control, not a key`);
-      else await flash('no press seen (or daemon unreachable)');
+      else if (r.status === 200 && r.body) await flash(`that was ${r.body.k} — a knob/joystick control, not a key`, C.orange);
+      else await flash('no press seen (or daemon unreachable)', C.orange);
       continue;
     }
     await keyEditor(choice);
   }
+}
+
+async function pickPane(config) {
+  const r = await api('GET', '/state');
+  if (r.status !== 200) { await flash('daemon unreachable — cannot list panes', C.orange); return null; }
+  const panes = r.body.panes || [];
+  if (!panes.length) { await flash('no tmux panes found', C.orange); return null; }
+  return menu('Pick a live pane', panes.map(p => ({
+    label: `#${String(p.position).padStart(2)} · ${p.coord.padEnd(20)}`,
+    hint: `${p.command}${p.hasClaude ? ` · ${C.green}claude ●${C.reset}` : ''}${p.active ? ' · (you are here)' : ''}`,
+    value: p,
+  })));
 }
 
 async function keyEditor(name) {
@@ -245,7 +343,7 @@ async function keyEditor(name) {
     const config = readConfig();
     const current = describeKey(config.keys[name]);
     const choice = await menu(`${name} — currently: ${current}`, [
-      { label: 'Jump to a tmux pane…', hint: 'position-ordered pane index', value: 'tmux' },
+      { label: 'Jump to a tmux pane…', hint: 'by position, or pinned to an exact pane', value: 'tmux' },
       { label: 'Slash command / prompt…', hint: 'a skill or custom text, typed into the focused session', value: 'prompt' },
       { label: 'Review', hint: '/code-review on the focused session', value: 'review' },
       { label: 'Approve dialogs', hint: 'Enter on the highlighted option', value: 'approve' },
@@ -258,9 +356,20 @@ async function keyEditor(name) {
     if (choice === '__test') { await testKey(name); continue; }
 
     if (choice === 'tmux') {
-      const idx = await input('Pane position (1 = first pane, top-left first):', '1');
-      if (idx === null || !/^\d+$/.test(idx)) continue;
-      config.keys[name] = { action: 'tmux', index: Number(idx) - 1 };
+      const how = await menu('How should this key find its pane?', [
+        { label: 'By position…', hint: 'Nth pane, sorted session→window→top→left; survives pane churn', value: 'position' },
+        { label: 'Pin a live pane…', hint: 'exact session:window.pane; survives layout reshuffles', value: 'pin' },
+      ]);
+      if (how === null) continue;
+      if (how === 'position') {
+        const pane = await pickPane(config);
+        if (!pane) continue;
+        config.keys[name] = { action: 'tmux', index: pane.position - 1 };
+      } else {
+        const pane = await pickPane(config);
+        if (!pane) continue;
+        config.keys[name] = { action: 'tmux', target: pane.coord };
+      }
     } else if (choice === 'prompt') {
       const skills = listSkills();
       const pick = await menu('What should it type?', [
@@ -287,6 +396,37 @@ async function keyEditor(name) {
   }
 }
 
+async function tmuxScreen() {
+  while (true) {
+    const config = readConfig();
+    const r = await api('GET', '/state');
+    const panes = r.status === 200 ? r.body.panes || [] : [];
+    const paneRows = panes.slice(0, 8).map(p =>
+      `  ${C.dim}#${p.position}${C.reset} ${p.coord.padEnd(22)} ${p.command}` +
+      `${p.hasClaude ? ` ${C.green}●${C.reset}` : ''}${p.active ? `  ${C.purple}← you${C.reset}` : ''}`);
+    const choice = await menu(
+      `Tmux — live panes in key order:\n${paneRows.join('\n') || `  ${C.dim}(none visible)${C.reset}`}\n`, [
+        { label: `Target mode: ${config.target}`, hint: 'panes = individual panes · windows = whole windows', value: 'mode' },
+        { label: `Socket: ${config.tmuxSocket || 'auto'}`, hint: 'auto = learned from sessions; set for a custom -S socket', value: 'socket' },
+        { label: 'Reassign keys 1-6 to panes…', hint: 'shortcut into the Keys editor', value: 'keys' },
+      ]);
+    if (choice === null) return;
+    if (choice === 'mode') {
+      config.target = config.target === 'panes' ? 'windows' : 'panes';
+      writeConfig(config);
+      await flash(`saved — keys now target ${config.target}`);
+    } else if (choice === 'socket') {
+      const v = await input('Socket path (empty = auto):', config.tmuxSocket || '');
+      if (v === null) continue;
+      config.tmuxSocket = v || null;
+      writeConfig(config);
+      await flash('saved (daemon hot-reloads)');
+    } else if (choice === 'keys') {
+      await keysScreen();
+    }
+  }
+}
+
 async function colorsScreen() {
   while (true) {
     const config = readConfig();
@@ -301,6 +441,35 @@ async function colorsScreen() {
   }
 }
 
+/** A terminal mirror of what the device is doing during a preview. */
+async function animatePreview(style, ms = 2600) {
+  const steps = Math.floor(ms / 60);
+  for (let i = 0; i < steps; i++) {
+    const t = i / steps;
+    let cells;
+    if (style.effect === 'breath' || style.effect === 'shallowBreath') {
+      const b = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(t * Math.PI * 4));
+      cells = Array(6).fill(block(style.color, b * (style.brightness ?? 1)));
+    } else if (style.effect === 'snake') {
+      const head = Math.floor(t * 12) % 6;
+      cells = Array.from({ length: 6 }, (_, j) => block(style.color, j === head ? 1 : 0.15));
+    } else if (style.effect === 'rainbow') {
+      cells = Array.from({ length: 6 }, (_, j) => {
+        const h = ((t * 2 + j / 6) % 1) * 6;
+        const x = Math.floor(h), f = h - x;
+        const rgbv = [[1, f, 0], [1 - f, 1, 0], [0, 1, f], [0, 1 - f, 1], [f, 0, 1], [1, 0, 1 - f]][x % 6];
+        const c = (Math.round(rgbv[0] * 255) << 16) | (Math.round(rgbv[1] * 255) << 8) | Math.round(rgbv[2] * 255);
+        return block(c);
+      });
+    } else {
+      cells = Array(6).fill(block(style.color, style.brightness ?? 1));
+    }
+    out.write(`\r  ${cells.join(' ')}  ${C.dim}← mirroring the device${C.reset}\x1b[K`);
+    await sleep(60);
+  }
+  out.write('\r\x1b[K');
+}
+
 async function colorEditor(status) {
   while (true) {
     const config = readConfig();
@@ -311,19 +480,21 @@ async function colorEditor(status) {
         { label: `Effect: ${style.effect}`, hint: EFFECTS.join(' / '), value: 'effect' },
         { label: `Speed: ${style.speed ?? 0}`, hint: '0-1, for animated effects', value: 'speed' },
         { label: `Brightness: ${style.brightness ?? 1}`, hint: '0-1 multiplier', value: 'brightness' },
-        { label: '▸ Preview on the device', hint: 'lights all six keys for 3s', value: '__preview' },
+        { label: '▸ Preview on the device', hint: 'lights all six keys + mirrors here', value: '__preview' },
       ]);
     if (choice === null) return;
 
-    if (choice === '__preview') {
+    const preview = async () => {
       const r = await api('POST', '/preview', {
-        ms: 3000,
+        ms: 2800,
         items: [{ color: style.color, effect: style.effect, speed: style.speed ?? 0,
                   brightness: style.brightness ?? 1 }],
       });
-      await flash(r.status === 204 ? 'previewing on the device…' : 'daemon unreachable — no preview');
-      continue;
-    }
+      if (r.status === 204) await animatePreview(style);
+      else await flash('daemon unreachable — no preview', C.orange);
+    };
+
+    if (choice === '__preview') { await preview(); continue; }
     if (choice === 'color') {
       const hex = await input('Hex color (RRGGBB):', style.color.toString(16).padStart(6, '0'));
       if (hex === null || !/^[0-9a-fA-F]{6}$/.test(hex)) continue;
@@ -338,27 +509,21 @@ async function colorEditor(status) {
       style[choice] = Math.max(0, Math.min(1, Number(v)));
     }
     writeConfig(config);
-    // Show the edit on the hardware immediately -- the whole point of tuning
-    // colors interactively is seeing them on the actual LEDs, not in a hex code.
-    await api('POST', '/preview', {
-      ms: 2000,
-      items: [{ color: style.color, effect: style.effect, speed: style.speed ?? 0,
-                brightness: style.brightness ?? 1 }],
-    });
-    await flash('saved + previewing (daemon hot-reloads)');
+    await preview();
+    await flash('saved (daemon hot-reloads)');
   }
 }
 
 async function testKey(name) {
   const r = await api('POST', '/press', { k: name, act: 1 });
-  if (r.status !== 204) { await flash('daemon unreachable — cannot test'); return; }
-  out.write(`\n${C.green}pressed ${name}${C.reset} — the focused pane reacts; daemon log says:\n`);
-  await new Promise(res => setTimeout(res, 1200));
+  if (r.status !== 204) { await flash('daemon unreachable — cannot test', C.orange); return; }
+  out.write(`\n  ${C.green}pressed ${name}${C.reset} — the focused pane reacts; daemon log says:\n`);
+  await withSpinner('waiting for the daemon...', sleep(1200));
   try {
     const log = fs.readFileSync(path.join(HERE, 'daemon.log'), 'utf8').trim().split('\n');
     for (const line of log.slice(-3)) out.write(`  ${C.dim}${line.slice(0, 110)}${C.reset}\n`);
   } catch {}
-  out.write(`\n${C.dim}any key to continue${C.reset}\n`);
+  out.write(`\n  ${C.dim}any key to continue${C.reset}\n`);
   await readKey();
 }
 
@@ -399,19 +564,37 @@ async function knobScreen() {
 
 // ---------------------------------------------------------------- main
 
+async function splash() {
+  const lines = [
+    '        _                 _                    _                ',
+    '   ___ | | __ _ _   _  __| | ___   _ __ ___  (_) ___ _ __ ___  ',
+    '  / __|| |/ _` | | | |/ _` |/ _ \\ | \'_ ` _ \\ | |/ __| \'__/ _ \\ ',
+    ' | (__ | | (_| | |_| | (_| |  __/ | | | | | || | (__| | | (_) |',
+    '  \\___||_|\\__,_|\\__,_|\\__,_|\\___| |_| |_| |_||_|\\___|_|  \\___/ ',
+  ];
+  out.write('\x1b[2J\x1b[H\x1b[?25l\n');
+  for (const line of lines) {
+    out.write(`${C.purple}${line}${C.reset}\n`);
+    await sleep(45);
+  }
+  await sleep(250);
+}
+
 async function main() {
   startInput();
-  out.write('\x1b[?25l');
+  await splash();
   while (true) {
     const choice = await menu('', [
       { label: 'Keys', hint: 'assign actions to the 13 keys', value: 'keys' },
+      { label: 'Tmux', hint: 'connect keys to your panes, windows, socket', value: 'tmux' },
       { label: 'Knob', hint: 'turn & click behavior', value: 'knob' },
       { label: 'Colors', hint: 'status colors, previewed live on the device', value: 'colors' },
       { label: 'Test', hint: 'fire any key\'s action from here', value: 'test' },
       { label: 'Quit', value: 'quit' },
-    ]);
+    ], { live: true, footer: '↑↓ move · enter select · q quit · map refreshes live' });
     if (choice === null || choice === 'quit') quit();
     if (choice === 'keys') await keysScreen();
+    if (choice === 'tmux') await tmuxScreen();
     if (choice === 'knob') await knobScreen();
     if (choice === 'colors') await colorsScreen();
     if (choice === 'test') await testScreen();

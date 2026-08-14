@@ -347,16 +347,36 @@ async function refreshTargets() {
   }
 }
 
-/** Each owned key, resolved against live tmux state or its action state. */
+function paneCoord(t) {
+  return `${t.session}:${t.windowIndex}.${t.paneIndex}`;
+}
+
+/**
+ * Each owned key, resolved against live tmux state or its action state.
+ *
+ * A tmux key finds its pane one of two ways, because setups disagree about
+ * what "the same place" means:
+ *
+ *   { "action": "tmux", "index": 0 }                 -- by POSITION: the Nth
+ *     pane in the sorted list (session, window, top, left). Survives panes
+ *     being replaced; the key means "top-left", whatever lives there.
+ *   { "action": "tmux", "target": "work:2.1" }       -- PINNED to an exact
+ *     session:window.pane coordinate. Survives layout reshuffles; the key
+ *     means THAT pane, and goes dark if it doesn't exist.
+ */
 function assignSlots() {
   const byPane = sessionsByPane();
   return keyEntries().map(entry => {
     if (entry.action !== 'tmux') {
       return { ...entry, kind: 'action', state: readActionState(entry.name) };
     }
-    const target = targets.list[entry.index] || null;
+    const target = entry.target
+      ? targets.list.find(t => paneCoord(t) === entry.target) || null
+      : targets.list[entry.index] || null;
     return {
-      ...entry, kind: 'tmux', target,
+      // `pinned` keeps the configured coordinate string; `target` is the
+      // resolved live pane (the spread would otherwise clobber one with the other).
+      ...entry, kind: 'tmux', target, pinned: entry.target || null,
       session: target ? byPane.get(target.id) || null : null,
     };
   });
@@ -1305,13 +1325,18 @@ function gameServer() {
     if (req.method === 'GET' && req.url === '/state') {
       const slots = assignSlots().map(s => ({
         name: s.name, action: s.action, label: s.label || null,
-        kind: s.kind, index: s.index ?? null,
-        target: s.kind === 'tmux' && s.target
-          ? `${s.target.session}:${s.target.windowIndex}.${s.target.paneIndex}` : null,
+        kind: s.kind, index: s.index ?? null, pinned: s.pinned || null,
+        target: s.kind === 'tmux' && s.target ? paneCoord(s.target) : null,
         status: statusOf(s),
       }));
+      // The live pane map, in key-assignment order, so the CLI can offer real
+      // panes instead of asking users to imagine positional indices.
+      const panes = targets.list.map((t, i) => ({
+        position: i + 1, coord: paneCoord(t), command: t.command,
+        hasClaude: t.hasClaude, active: t.active,
+      }));
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ connected: dev.connected, config, slots }));
+      res.end(JSON.stringify({ connected: dev.connected, config, slots, panes }));
       return;
     }
     if (req.method === 'POST' && req.url === '/press') {

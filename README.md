@@ -32,22 +32,149 @@ daemon).
 ## The configurator: `claude-micro`
 
 The installer puts `claude-micro` on your PATH — an interactive CLI for the
-whole setup, no JSON editing required:
+whole setup, no JSON editing required. The main screen is a **live mirror of
+the device**: each agent key drawn in its actual LED color, refreshing in
+place as sessions change state.
 
-- **Keys** — assign any of the 13 keys: jump-to-pane, review, approve/deny,
-  or any slash command / skill / custom prompt (it lists your installed
-  skills). *Identify mode* asks you to press the physical key you mean.
-- **Colors** — per-status color, effect, speed, brightness — every edit is
-  **previewed live on the device's LEDs**, because tuning a color by hex code
-  is not tuning a color.
-- **Knob** — turn/click behavior, mode-cycle length, model-confirm scope.
-- **Test** — fire any key's action from the CLI through the daemon's real
-  dispatch path, and see the daemon log's verdict inline.
+```
+claude-micro configurator   daemon up · device connected
+────────────────────────────────────────────────────────────────────────
+   ██ ██ ██ ██ ██ ██    ◉ knob   ✛ joystick
+   1  2  3  4  5  6
+   7·research  8·approve  9·deny  10·ship  11·  12·  13·
+  ❯ Keys    assign actions to the 13 keys
+    Tmux    connect keys to your panes, windows, socket
+    Knob    turn & click behavior
+    Colors  status colors, previewed live on the device
+    Test    fire any key's action from here
+    Quit
+```
 
 Everything saves straight to `config.json`, which the daemon hot-reloads —
 there is no apply step. The CLI talks to the daemon over its localhost
 control API (`/state`, `/next-press`, `/press`, `/preview`), so the daemon
 remains the only process touching the device.
+
+## Connecting your tmux setup
+
+Keys 1–6 jump between tmux panes, and setups disagree about what "the same
+place" means — so a key can find its pane **two ways**:
+
+| Mode | Config | Behaves like |
+|---|---|---|
+| **By position** | `{ "action": "tmux", "index": 0 }` | "the top-left pane, whatever lives there" — panes sorted session → window → top → left. Survives panes being killed and recreated. |
+| **Pinned** | `{ "action": "tmux", "target": "work:2.1" }` | "THAT pane, wherever it moves" — exact `session:window.pane`. Survives layout reshuffles; the key goes dark if the pane doesn't exist. |
+
+The CLI's **Tmux** screen shows your live panes in key order — with a ● on
+panes running Claude and a marker on where you are — and both assignment
+flows pick from that list rather than asking you to imagine indices:
+
+```
+Tmux — live panes in key order:
+  #1 powersesh:1.1          claude ●
+  #2 powersesh:1.2          node
+  #3 powersesh:1.3          claude ●
+  #4 powersesh:1.4          claude ●  ← you
+  #5 powersesh:2.1          node
+  ❯ Target mode: panes   panes = individual panes · windows = whole windows
+    Socket: auto          auto = learned from sessions; set for a custom -S socket
+    Reassign keys 1-6 to panes…
+```
+
+Also there:
+
+- **Target mode `windows`** — keys map to whole tmux windows instead of
+  individual panes (for one-window-per-project setups).
+- **Socket** — normally learned from the running sessions; set it explicitly
+  if you run tmux with a custom `-S` socket.
+- Multiple sessions just work: the sort covers all of them, and pinning is
+  the natural fit when your layout spans sessions.
+
+## Wiring skills and actions to buttons
+
+Any of the 13 keys can carry any action. Three ways to wire one:
+
+1. **`claude-micro` → Keys** — pick the key from the list.
+2. **Identify mode** — pick "⊙ identify", press the physical key you mean,
+   land in its editor. The press is swallowed, so identifying a key never
+   fires it.
+3. **Edit `config.json` directly** — one entry per key under `keys`; the
+   daemon hot-reloads on save.
+
+```
+AG05 — currently: standup (/btw)
+  ❯ Jump to a tmux pane…       by position, or pinned to an exact pane
+    Slash command / prompt…    a skill or custom text, typed into the focused session
+    Review                     /code-review on the focused session
+    Approve dialogs            Enter on the highlighted option
+    Deny dialogs               Esc on the dialog
+    Nothing                    leave the key to the ChatGPT app
+    ▸ Test this key now        fires the real action
+```
+
+### The action types
+
+| Action | Config | What a press does |
+|---|---|---|
+| `tmux` | `{ "action": "tmux", "index": N }` or `{ ..., "target": "sess:w.p" }` | jump there (double-press zooms) |
+| `prompt` | `{ "action": "prompt", "label": "standup", "text": "/btw" }` | types the text into the focused session and submits — drafts are stashed and restored, never lost |
+| `review` | `{ "action": "review", "effort": "high" }` | `/code-review` in the focused session; typed composer text becomes the review target |
+| `approve` | `{ "action": "approve", "cooldownMs": 700 }` | Enter on the visible dialog's highlighted option — refuses if no dialog is up |
+| `deny` | `{ "action": "deny", "cooldownMs": 700 }` | Esc on the visible dialog — same guard |
+| `none` | `{ "action": "none" }` | leaves the key to the ChatGPT app |
+
+### Where skills live, and how buttons find them
+
+A **skill** is a folder with a `SKILL.md` — the prompt/instructions a slash
+command carries. Two places matter:
+
+- **`~/.claude/skills/<name>/SKILL.md`** — user-level: available in every
+  project, and **this is what the CLI's skill picker lists**. The skills this
+  repo ships (`/btw`, `/research`, `/ship`) install here.
+- **`<repo>/.claude/skills/<name>/SKILL.md`** — project-level: available only
+  to sessions in that repo. A button can still type it (`Custom text…` →
+  `/that-skill`), it just won't be in the picker.
+
+Minimal anatomy of a button-friendly skill:
+
+```markdown
+---
+name: standup-brief
+description: |
+  One-paragraph status of this session's current work.
+user-invocable: true
+disable-model-invocation: true
+---
+
+Report in one tight paragraph what this session is working on,
+what just changed, and what happens next. Take no actions.
+```
+
+Drop that at `~/.claude/skills/standup-brief/SKILL.md`, run `claude-micro`,
+assign it to a key — the picker finds it immediately. Two behaviors worth
+knowing:
+
+- A button types `/name` into the **focused pane's** session, so one key
+  works across every project — each session answers from its own context.
+- Sessions discover skills at start; a session older than the skill won't
+  know the command until restarted.
+- The prompt action never destroys typing: an in-progress draft is stashed
+  (`C-s`), the command is submitted, and the draft is restored. If you're
+  actively typing at press-time, the key politely refuses instead.
+
+### Colors
+
+Per-status color / effect / speed / brightness, each edit **previewed live on
+the device's LEDs** and mirrored as an animation in the terminal — tuning a
+color by hex code is not tuning a color.
+
+```
+Status colors
+  ❯ ██████  working             solid · turn in progress
+    ██████  awaiting-approval   breath 0.4 · permission prompt / waiting on you
+    ██████  unread              solid · turn finished, not yet looked at
+    ██████  idle                solid · attached, nothing pending
+```
 
 ---
 
