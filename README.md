@@ -219,7 +219,10 @@ knowing:
 
 Per-status color / effect / speed / brightness, each edit **previewed live on
 the device's LEDs** and mirrored as an animation in the terminal — tuning a
-color by hex code is not tuning a color.
+color by hex code is not tuning a color. Picking one offers a curated palette
+(swatches + hex), or **Custom hex** — `#RRGGBB`, `RRGGBB`, `0xRRGGBB`, and
+`#RGB` shorthand all parse, with a live swatch rendering on the prompt line
+as you type. Ctrl+U clears a prefilled field.
 
 ```
 Status colors

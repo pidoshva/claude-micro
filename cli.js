@@ -258,19 +258,72 @@ async function menu(title, items, opts = {}) {
   }
 }
 
-async function input(promptText, initial = '') {
+/**
+ * Line editor. opts.preview(text) returns a string rendered live on the
+ * prompt line as the user types -- how hex input shows its color before
+ * anything is saved.
+ */
+async function input(promptText, initial = '', opts = {}) {
+  const paintPreview = text => {
+    if (!opts.preview) return;
+    // Save cursor, rewrite the prompt line above with the preview, restore.
+    out.write(`\x1b7\x1b[1A\r\x1b[K  ${promptText}  ${opts.preview(text) || ''}\x1b8`);
+  };
   out.write(`\n  ${promptText}\n  ${C.purple}❯ ${C.reset}\x1b[?25h${initial}`);
+  paintPreview(initial);
   let text = initial;
   while (true) {
     const k = await readKey();
     if (k === '\r' || k === '\n') { out.write('\x1b[?25l\n'); return text.trim(); }
     if (k === '\x1b') { out.write('\x1b[?25l\n'); return null; }
     if (k === '\x7f' || k === '\b') {
-      if (text) { text = text.slice(0, -1); out.write('\b \b'); }
+      if (text) { text = text.slice(0, -1); out.write('\b \b'); paintPreview(text); }
+    } else if (k === '\x15') {                          // C-u clears the line
+      out.write('\b \b'.repeat(text.length)); text = ''; paintPreview(text);
     } else if (k >= ' ' && k.length === 1) {
-      text += k; out.write(k);
+      text += k; out.write(k); paintPreview(text);
     }
   }
+}
+
+/** Accepts #RRGGBB, RRGGBB, 0xRRGGBB, and #RGB shorthand. Null if not a color. */
+function parseHex(text) {
+  const t = String(text || '').trim().replace(/^#/, '').replace(/^0x/i, '');
+  if (/^[0-9a-fA-F]{6}$/.test(t)) return parseInt(t, 16);
+  if (/^[0-9a-fA-F]{3}$/.test(t)) {
+    return parseInt(t.split('').map(c => c + c).join(''), 16);
+  }
+  return null;
+}
+
+const PALETTE = [
+  ['codex blue', 0x304FFE], ['orange', 0xFF6D00], ['green', 0x00FF4C],
+  ['white', 0xFFFFFF], ['red', 0xFF0033], ['purple', 0x8B54F7],
+  ['deep purple', 0x5B1FD3], ['cyan', 0x00E5FF], ['pink', 0xFF4081],
+  ['yellow', 0xFFD600], ['teal', 0x1DE9B6],
+];
+
+/** Preset palette + free hex with a live swatch. Returns an int or null. */
+async function pickColor(currentInt) {
+  const choice = await menu('Pick a color', [
+    ...PALETTE.map(([name, c]) => ({
+      label: `${swatch(c)}  #${c.toString(16).padStart(6, '0')}`, hint: name, value: c,
+    })),
+    { label: 'Custom hex…', hint: '#RRGGBB, RRGGBB, 0xRRGGBB, or #RGB', value: '__hex' },
+  ]);
+  if (choice === null) return null;
+  if (choice !== '__hex') return choice;
+  const text = await input('Hex color (live swatch updates as you type):',
+    currentInt.toString(16).padStart(6, '0'), {
+      preview: t => {
+        const c = parseHex(t);
+        return c === null ? `${C.dim}...${C.reset}` : `${swatch(c)} #${c.toString(16).padStart(6, '0')}`;
+      },
+    });
+  if (text === null) return null;
+  const parsed = parseHex(text);
+  if (parsed === null) { await flash(`"${text}" is not a color`, C.orange); return null; }
+  return parsed;
 }
 
 // ---------------------------------------------------------------- skills
@@ -549,7 +602,7 @@ async function colorEditor(status) {
     const style = config.statusStyle[status];
     const choice = await menu(
       `${status}  ${swatch(style.color)}  #${style.color.toString(16).padStart(6, '0')}`, [
-        { label: 'Color…', hint: 'hex, e.g. FF6D00', value: 'color' },
+        { label: 'Color…', hint: 'palette, or any hex (#RRGGBB / #RGB / 0x…)', value: 'color' },
         { label: `Effect: ${style.effect}`, hint: EFFECTS.join(' / '), value: 'effect' },
         { label: `Speed: ${style.speed ?? 0}`, hint: '0-1, for animated effects', value: 'speed' },
         { label: `Brightness: ${style.brightness ?? 1}`, hint: '0-1 multiplier', value: 'brightness' },
@@ -569,9 +622,9 @@ async function colorEditor(status) {
 
     if (choice === '__preview') { await preview(); continue; }
     if (choice === 'color') {
-      const hex = await input('Hex color (RRGGBB):', style.color.toString(16).padStart(6, '0'));
-      if (hex === null || !/^[0-9a-fA-F]{6}$/.test(hex)) continue;
-      style.color = parseInt(hex, 16);
+      const picked = await pickColor(style.color);
+      if (picked === null) continue;
+      style.color = picked;
     } else if (choice === 'effect') {
       const effect = await menu('Effect', EFFECTS.map(e => ({ label: e, value: e })));
       if (effect === null) continue;
