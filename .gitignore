@@ -1,0 +1,22 @@
+# Extracted from the user's own ChatGPT.app at install time -- proprietary,
+# never committed. extract-sdk.js regenerates it.
+lib/
+
+# Generated at install time (hard link to the local node binary)
+ClaudeMicro.app/
+
+# Runtime state and logs
+state.json
+state.json.lock
+daemon.log*
+launchd.out.log
+launchd.err.log
+daemon.pid
+actions/
+reports/
+game/.chrome-profile/
+
+# Per-machine configuration (config.example.json is the template)
+config.json
+
+.DS_Store

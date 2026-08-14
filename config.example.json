@@ -1,0 +1,134 @@
+{
+  "keys": {
+    "AG00": {
+      "action": "tmux",
+      "index": 0
+    },
+    "AG01": {
+      "action": "tmux",
+      "index": 1
+    },
+    "AG02": {
+      "action": "tmux",
+      "index": 2
+    },
+    "AG03": {
+      "action": "tmux",
+      "index": 3
+    },
+    "AG04": {
+      "action": "review",
+      "effort": "high"
+    },
+    "AG05": {
+      "action": "prompt",
+      "label": "standup",
+      "text": "/btw"
+    },
+    "ACT06": {
+      "action": "prompt",
+      "label": "research",
+      "text": "/research"
+    },
+    "ACT07": {
+      "action": "approve",
+      "cooldownMs": 700
+    },
+    "ACT08": {
+      "action": "deny",
+      "cooldownMs": 700
+    },
+    "ACT09": {
+      "action": "prompt",
+      "label": "ship",
+      "text": "/ship"
+    }
+  },
+  "target": "panes",
+  "tmuxSocket": null,
+  "reassertMs": 250,
+  "brightness": 1,
+  "inactiveDim": 0.35,
+  "highlightActive": true,
+  "glow": true,
+  "glowBrightness": 0.4,
+  "glowReassertMs": 750,
+  "glowStatuses": null,
+  "pressDebounceMs": 60,
+  "doublePressMs": 600,
+  "doublePress": "zoom",
+  "focusTerminal": true,
+  "debugReports": false,
+  "modeCycle": 4,
+  "pickerIdleMs": 15000,
+  "knobClickMs": 300,
+  "turnSteps": 1,
+  "turnWindowMs": 80,
+  "debugTurns": true,
+  "turnIdleMs": 4000,
+  "knobs": {
+    "left": {
+      "key": "ENC_CLK",
+      "cw": "ENC_CW",
+      "ccw": "ENC_CC",
+      "turn": "mode",
+      "click": "model"
+    },
+    "right": {
+      "key": null,
+      "cw": null,
+      "ccw": null,
+      "turn": "none",
+      "click": "none"
+    }
+  },
+  "actionCooldownMs": 2500,
+  "actionErrorMs": 8000,
+  "staleSessionHours": 12,
+  "focusApp": null,
+  "statusStyle": {
+    "working": {
+      "color": 3166206,
+      "effect": "solid",
+      "speed": 0
+    },
+    "awaiting-approval": {
+      "color": 16739584,
+      "effect": "breath",
+      "speed": 0.4
+    },
+    "awaiting-response": {
+      "color": 16739584,
+      "effect": "breath",
+      "speed": 0.4
+    },
+    "unread": {
+      "color": 65356,
+      "effect": "solid",
+      "speed": 0
+    },
+    "idle": {
+      "color": 16777215,
+      "effect": "solid",
+      "speed": 0
+    },
+    "error": {
+      "color": 16711731,
+      "effect": "solid",
+      "speed": 0
+    },
+    "empty": {
+      "color": 16777215,
+      "effect": "solid",
+      "speed": 0,
+      "brightness": 0.12
+    }
+  },
+  "joystick": {
+    "deadzone": 0.3,
+    "chargeMs": 2000,
+    "idleDropMs": 350,
+    "gamePort": 4477,
+    "display": "tmux"
+  }
+}
