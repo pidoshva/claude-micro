@@ -266,9 +266,12 @@ to orange is how you get stale orange keys on idle sessions.
 
 ## The configurator: `claude-micro`
 
-The installer puts `claude-micro` on your PATH. The main screen is a **live
-mirror of the device** — each agent key drawn in its actual LED color,
-refreshing in place as sessions change state:
+The installer puts `claude-micro` on your PATH — a
+[Bubble Tea](https://github.com/charmbracelet/bubbletea) TUI (built at install
+time if Go is present; a zero-dependency node edition, `cli.js`, is the
+fallback — same screens, same daemon API). The main screen is a **live mirror
+of the device** — each agent key drawn in its actual LED color, refreshing in
+place as sessions change state:
 
 ```
 claude-micro configurator   daemon up · device connected

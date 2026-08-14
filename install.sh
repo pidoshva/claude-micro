@@ -44,9 +44,18 @@ if [ ! -f "$DEST/actions.json" ]; then
 fi
 
 echo "==> installing the configurator (claude-micro on your PATH)"
+if command -v go >/dev/null; then
+  echo "==> building the Bubble Tea edition"
+  (cd "$SRC/cli" && go build -o "$DEST/claude-micro-tui" .) \
+    || echo "==> WARNING: Go build failed; the node edition will be used"
+fi
 mkdir -p "$HOME/.local/bin"
 cat > "$HOME/.local/bin/claude-micro" <<SHIM
 #!/bin/bash
+# Prefers the Bubble Tea edition; falls back to the zero-dep node CLI.
+if [ -x "\$HOME/.claude/micro/claude-micro-tui" ]; then
+  exec "\$HOME/.claude/micro/claude-micro-tui" "\$@"
+fi
 exec "$NODE_BIN" "$DEST/cli.js" "\$@"
 SHIM
 chmod +x "$HOME/.local/bin/claude-micro"
