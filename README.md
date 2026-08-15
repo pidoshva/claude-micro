@@ -9,17 +9,7 @@ The knob drives permission modes and the model picker. Action keys answer
 permission dialogs and fire your workflows. The joystick navigates menus —
 or, swirled all the way around, opens a hidden game.
 
-```
-        ╭─────────────────────────────────────────────╮
-        │    ①   ②   ③   ④   ⑤   ⑥     ← agent row    │
-        │   ▁▁  ▁▁  ▁▁  ▁▁  ▁▁  ▁▁       (RGB per key) │
-        │                                             │
-        │    ⑦   ⑧   ⑨   ⑩   ⑪   ⑫   ⑬  ← action row   │
-        │                                             │
-        │    ◉ knob                joystick ✛         │
-        ╰─────────────────────────────────────────────╯
-                   (schematic, not to scale)
-```
+<img src="assets/device.svg" alt="Codex Micro schematic" width="560">
 
 <img alt="macOS" src="https://img.shields.io/badge/macOS-14%2B-111?logo=apple&logoColor=white">
 <img alt="Node" src="https://img.shields.io/badge/daemon-Node%20%E2%89%A5%2018-5FA04E?logo=nodedotjs&logoColor=white">
