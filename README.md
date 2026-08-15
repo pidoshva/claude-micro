@@ -21,7 +21,11 @@ or, swirled all the way around, opens a hidden game.
                    (schematic, not to scale)
 ```
 
-`macOS` · `Node ≥ 18` · `tmux` · `zero runtime dependencies`
+<img alt="macOS" src="https://img.shields.io/badge/macOS-14%2B-111?logo=apple&logoColor=white">
+<img alt="Node" src="https://img.shields.io/badge/daemon-Node%20%E2%89%A5%2018-5FA04E?logo=nodedotjs&logoColor=white">
+<img alt="Go" src="https://img.shields.io/badge/TUI-Bubble%20Tea-FF75B7?logo=go&logoColor=white">
+<img alt="tmux" src="https://img.shields.io/badge/works%20in-tmux-1BB91F?logo=tmux&logoColor=white">
+<img alt="deps" src="https://img.shields.io/badge/runtime%20deps-zero-8B54F7">
 
 </div>
 
@@ -69,9 +73,13 @@ approve — without touching the keyboard.
 
 ## Quick start
 
-**Requirements:** macOS · a Codex Micro · tmux · Node 18+ · Claude Code ·
-ChatGPT.app installed (the device SDK is extracted from it locally — it is
-proprietary and never ships in this repo).
+**Requirements:** macOS · a Codex Micro · tmux · Node 18+ · Claude Code
+
+> [!NOTE]
+> ChatGPT.app must be installed: the Work Louder device SDK is extracted
+> from it **locally, at install time** — it is proprietary and never ships
+> in this repo. Go is optional (builds the Bubble Tea TUI; node edition
+> otherwise).
 
 ```bash
 git clone https://github.com/pidoshva/claude-micro.git
@@ -85,7 +93,8 @@ grant Input Monitoring to, puts `claude-micro` on your PATH, and loads the
 LaunchAgent. Per-machine settings live in `~/.claude/micro/config.json` —
 created once, never overwritten by reinstalls, hot-reloaded by the daemon.
 
-**Two manual steps remain** — macOS will not let a script do them:
+> [!IMPORTANT]
+> **Two manual steps remain** — macOS will not let a script do them:
 
 1. **Grant Input Monitoring**: System Settings → Privacy & Security →
    Input Monitoring → add `~/.claude/micro/ClaudeMicro.app`, then
@@ -104,9 +113,12 @@ created once, never overwritten by reinstalls, hot-reloaded by the daemon.
    </details>
 
 2. **In the ChatGPT app**: Settings → Codex Micro → leave every key the
-   daemon owns **unassigned**. The app repaints keys it thinks it owns and
-   will fight the daemon for them; unassigned keys are painted off and left
-   alone.
+   daemon owns **unassigned**.
+
+> [!WARNING]
+> The ChatGPT app repaints keys it thinks it owns and will fight the daemon
+> for them. Unassigned keys are painted off and left alone — that truce is
+> what makes coexistence work.
 
 Then run `claude-micro` and make the board yours.
 
@@ -267,25 +279,15 @@ to orange is how you get stale orange keys on idle sessions.
 ## The configurator: `claude-micro`
 
 The installer puts `claude-micro` on your PATH — a
-[Bubble Tea](https://github.com/charmbracelet/bubbletea) TUI (built at install
-time if Go is present; a zero-dependency node edition, `cli.js`, is the
-fallback — same screens, same daemon API). The main screen is a **live mirror
-of the device** — each agent key drawn in its actual LED color, refreshing in
-place as sessions change state:
+[Bubble Tea](https://github.com/charmbracelet/bubbletea) TUI (built at
+install time when Go is present; the zero-dependency node edition `cli.js`
+is the automatic fallback — same screens, same daemon API). The main screen
+draws the device as **keycaps filled with each session's live LED color**,
+refreshing in place:
 
-```
-claude-micro configurator   daemon up · device connected
-────────────────────────────────────────────────────────────────────────
-   ██ ██ ██ ██ ██ ██    ◉ knob   ✛ joystick
-   1  2  3  4  5  6
-   7·research  8·approve  9·deny  10·ship  11·  12·  13·
-  ❯ Keys    assign actions to the 13 keys
-    Tmux    connect keys to your panes, windows, socket
-    Knob    turn & click behavior
-    Colors  status colors, previewed live on the device
-    Test    fire any key's action from here
-    Quit
-```
+<p align="center">
+  <img src="assets/configurator.svg" alt="claude-micro configurator" width="680">
+</p>
 
 - **Keys** — assign anything to any key. *Identify mode*: press the physical
   key you mean; the press is swallowed, never fired.
@@ -293,16 +295,16 @@ claude-micro configurator   daemon up · device connected
   ([guide](#guide-connecting-your-tmux-setup)).
 - **Colors** — a preset palette or free hex (`#RRGGBB` / `#RGB` / `0x…`)
   with a **live swatch as you type**; every edit previews on the physical
-  LEDs and mirrors the effect (breath, snake, rainbow) as a terminal
-  animation. Ctrl+U clears a prefilled field.
+  LEDs.
 - **Test** — fire any key through the daemon's *real* dispatch path and see
   the daemon log's verdict inline. Guards included: testing approve with no
   dialog up shows you the refusal, exactly as a physical press would.
 
-Everything saves straight to `config.json`, which the daemon hot-reloads —
-no apply step. The CLI talks to the daemon over its localhost control API
-(`/state`, `/next-press`, `/press`, `/preview`), so the daemon remains the
-only process touching the device.
+> [!TIP]
+> Everything saves straight to `config.json`, which the daemon hot-reloads —
+> there is no apply step. The CLI talks to the daemon over its localhost
+> control API (`/state`, `/next-press`, `/press`, `/preview`), so the daemon
+> remains the only process touching the device.
 
 ## Guide: wiring skills and actions
 
@@ -455,12 +457,18 @@ just as useful typed by hand:
 
 ## How it works
 
-```
- Codex Micro ──HID──▶ daemon.js ◀──hooks── Claude Code sessions
-      ▲                  │ ▲                  (hook.py → state.json)
-      │ lighting RPCs    │ │ localhost API
-      ╰──────────────────╯ ▼
-                  claude-micro CLI · micro-drift game
+```mermaid
+flowchart LR
+    micro["🎛 Codex Micro"] <-->|"HID reads + lighting RPCs"| daemon["daemon.js"]
+    hooks["Claude Code sessions"] -->|"hook.py → state.json"| daemon
+    daemon <-->|"localhost control API"| cli["claude-micro TUI"]
+    daemon <-->|"SSE joystick stream"| game["micro-drift 🚀"]
+    daemon -->|"send-keys / switch-client"| tmux["tmux panes"]
+    style daemon fill:#8B54F7,color:#fff,stroke:#5B1FD3
+    style micro fill:#1a1a24,color:#fff,stroke:#8B54F7
+    style game fill:#1a1a24,color:#fff,stroke:#FF6D00
+    style cli fill:#1a1a24,color:#fff,stroke:#00E5FF
+    style tmux fill:#1a1a24,color:#fff,stroke:#1BB91F
 ```
 
 - **Writes** go through `@worklouder/device-kit-oai` — the SDK inside

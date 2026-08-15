@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="400" viewBox="0 0 680 400" font-family="SF Mono, Menlo, Consolas, monospace" font-size="13">
+  <!-- terminal window -->
+  <rect x="4" y="4" width="672" height="392" rx="12" fill="#16161e" stroke="#2a2a37" stroke-width="1.5"/>
+  <!-- traffic lights -->
+  <circle cx="26" cy="24" r="6" fill="#ff5f57"/>
+  <circle cx="46" cy="24" r="6" fill="#febc2e"/>
+  <circle cx="66" cy="24" r="6" fill="#28c840"/>
+  <text x="340" y="28" fill="#565666" text-anchor="middle" font-size="12">claude-micro</text>
+
+  <!-- title bar -->
+  <rect x="24" y="44" width="152" height="22" rx="4" fill="#8B54F7"/>
+  <text x="32" y="60" fill="#ffffff" font-weight="bold">⌥ CLAUDE MICRO</text>
+  <rect x="176" y="44" width="106" height="22" rx="4" fill="#2a2a37"/>
+  <text x="184" y="60" fill="#b8b8c8">configurator</text>
+  <text x="300" y="60" fill="#28c840">● daemon</text>
+  <text x="392" y="60" fill="#28c840">● device</text>
+
+  <!-- device panel -->
+  <rect x="24" y="78" width="632" height="150" rx="8" fill="none" stroke="#8B54F7" stroke-width="1.5"/>
+
+  <!-- keycaps -->
+  <g>
+    <rect x="48"  y="94" width="52" height="44" rx="8" fill="#304FFE22" stroke="#304FFE" stroke-width="2"/>
+    <rect x="62"  y="108" width="24" height="16" rx="3" fill="#304FFE"/>
+    <rect x="112" y="94" width="52" height="44" rx="8" fill="none" stroke="#3a3a48" stroke-width="2"/>
+    <rect x="176" y="94" width="52" height="44" rx="8" fill="#00FF4C18" stroke="#00FF4C" stroke-width="2"/>
+    <rect x="190" y="108" width="24" height="16" rx="3" fill="#00FF4C"/>
+    <rect x="240" y="94" width="52" height="44" rx="8" fill="#FF6D0022" stroke="#FF6D00" stroke-width="2"/>
+    <rect x="254" y="108" width="24" height="16" rx="3" fill="#FF6D00"/>
+    <rect x="304" y="94" width="52" height="44" rx="8" fill="none" stroke="#3a3a48" stroke-width="2"/>
+    <rect x="368" y="94" width="52" height="44" rx="8" fill="#ffffff14" stroke="#e8e8f0" stroke-width="2"/>
+    <rect x="382" y="108" width="24" height="16" rx="3" fill="#e8e8f0"/>
+  </g>
+  <text x="68"  y="158" fill="#565666">1</text>
+  <text x="132" y="158" fill="#565666">2</text>
+  <text x="196" y="158" fill="#565666">3</text>
+  <text x="260" y="158" fill="#565666">4</text>
+  <text x="324" y="158" fill="#565666">5</text>
+  <text x="388" y="158" fill="#565666">6</text>
+
+  <!-- knob + joystick -->
+  <circle cx="480" cy="116" r="16" fill="none" stroke="#8B54F7" stroke-width="2.5"/>
+  <line x1="480" y1="104" x2="480" y2="112" stroke="#8B54F7" stroke-width="2.5"/>
+  <text x="504" y="121" fill="#7a7a8c">knob</text>
+  <circle cx="586" cy="116" r="9" fill="#8B54F7"/>
+  <circle cx="586" cy="116" r="16" fill="none" stroke="#3a3a48" stroke-width="2"/>
+  <text x="610" y="121" fill="#7a7a8c">joy</text>
+
+  <!-- action row -->
+  <text x="48" y="186" fill="#8B54F7">7</text><text x="57" y="186" fill="#b8b8c8">·research</text>
+  <text x="146" y="186" fill="#8B54F7">8</text><text x="155" y="186" fill="#b8b8c8">·approve</text>
+  <text x="238" y="186" fill="#8B54F7">9</text><text x="247" y="186" fill="#b8b8c8">·deny</text>
+  <text x="310" y="186" fill="#8B54F7">10</text><text x="328" y="186" fill="#b8b8c8">·ship</text>
+  <text x="392" y="186" fill="#565666">11·—  12·—  13·—</text>
+  <text x="48" y="210" fill="#8B54F7">◉</text><text x="64" y="210" fill="#7a7a8c">knob · mode/model</text>
+  <text x="248" y="210" fill="#8B54F7">✛</text><text x="264" y="210" fill="#7a7a8c">joystick · d-pad/game</text>
+
+  <!-- menu panel -->
+  <rect x="24" y="240" width="632" height="128" rx="8" fill="none" stroke="#3a3a48" stroke-width="1.5"/>
+  <text x="44" y="264" fill="#8B54F7" font-weight="bold">❯</text>
+  <text x="60" y="264" fill="#ffffff" font-weight="bold">Keys</text>
+  <text x="132" y="264" fill="#565666">assign actions to the 13 keys</text>
+  <text x="60" y="284" fill="#b8b8c8">Tmux</text>
+  <text x="132" y="284" fill="#565666">connect keys to your panes, windows, socket</text>
+  <text x="60" y="304" fill="#b8b8c8">Knob</text>
+  <text x="132" y="304" fill="#565666">turn &amp; click behavior</text>
+  <text x="60" y="324" fill="#b8b8c8">Colors</text>
+  <text x="132" y="324" fill="#565666">status colors, previewed live on the device</text>
+  <text x="60" y="344" fill="#b8b8c8">Test</text>
+  <text x="132" y="344" fill="#565666">fire any key's action from here</text>
+
+  <text x="24" y="388" fill="#565666" font-size="12">↑↓/wheel move · enter select · esc back · q quit</text>
+</svg>
