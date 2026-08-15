@@ -61,17 +61,16 @@
   <text x="428" y="124" fill="#7a7a8c" font-size="12">← action row</text>
 
   <!-- knob -->
-  <circle cx="96" cy="184" r="26" fill="#191924" stroke="#8B54F7" stroke-width="2.5"/>
-  <circle cx="96" cy="184" r="19" fill="none" stroke="#2c2c38" stroke-width="1.5"/>
-  <line x1="96" y1="162" x2="96" y2="172" stroke="#8B54F7" stroke-width="3" stroke-linecap="round"/>
-  <text x="136" y="189" fill="#7a7a8c" font-size="12">knob · modes &amp; models</text>
+  <circle cx="120" cy="178" r="24" fill="#191924" stroke="#8B54F7" stroke-width="2.5"/>
+  <circle cx="120" cy="178" r="17" fill="none" stroke="#2c2c38" stroke-width="1.5"/>
+  <line x1="120" y1="158" x2="120" y2="167" stroke="#8B54F7" stroke-width="3" stroke-linecap="round"/>
+  <text x="120" y="218" fill="#565666" font-size="11" text-anchor="middle">knob · modes &amp; models</text>
 
   <!-- joystick -->
-  <circle cx="424" cy="184" r="26" fill="#15151f" stroke="#2c2c38" stroke-width="2"/>
-  <circle cx="430" cy="178" r="12" fill="#8B54F7"/>
-  <circle cx="427" cy="175" r="4" fill="#b28cff"/>
-  <text x="264" y="189" fill="#7a7a8c" font-size="12">d-pad &amp; game ·</text>
-  <text x="372" y="189" fill="#7a7a8c" font-size="12">joy</text>
+  <circle cx="440" cy="178" r="24" fill="#15151f" stroke="#2c2c38" stroke-width="2"/>
+  <circle cx="446" cy="172" r="11" fill="#8B54F7"/>
+  <circle cx="443" cy="169" r="4" fill="#b28cff"/>
+  <text x="440" y="218" fill="#565666" font-size="11" text-anchor="middle">joystick · d-pad &amp; game</text>
 
   <text x="280" y="248" fill="#43434f" font-size="11" text-anchor="middle">schematic, not to scale — the LEDs are your sessions' live states</text>
 </svg>

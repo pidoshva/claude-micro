@@ -9,13 +9,17 @@ The knob drives permission modes and the model picker. Action keys answer
 permission dialogs and fire your workflows. The joystick navigates menus —
 or, swirled all the way around, opens a hidden game.
 
-<img src="assets/device.svg" alt="Codex Micro schematic" width="560">
+<p align="center">
+  <img src="assets/device.svg" alt="Codex Micro schematic" width="560">
+</p>
 
+<p align="center">
 <img alt="macOS" src="https://img.shields.io/badge/macOS-14%2B-111?logo=apple&logoColor=white">
 <img alt="Node" src="https://img.shields.io/badge/daemon-Node%20%E2%89%A5%2018-5FA04E?logo=nodedotjs&logoColor=white">
 <img alt="Go" src="https://img.shields.io/badge/TUI-Bubble%20Tea-FF75B7?logo=go&logoColor=white">
 <img alt="tmux" src="https://img.shields.io/badge/works%20in-tmux-1BB91F?logo=tmux&logoColor=white">
 <img alt="deps" src="https://img.shields.io/badge/runtime%20deps-zero-8B54F7">
+</p>
 
 </div>
 
