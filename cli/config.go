@@ -8,10 +8,10 @@ package main
 
 import (
 	"encoding/json"
-	"strconv"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -53,9 +53,9 @@ func saveJSON(name string, m map[string]any) error {
 	return os.Rename(tmp, filepath.Join(microDir, name))
 }
 
-func LoadConfig() (Config, error)      { return loadJSON("config.json") }
-func (c Config) Save() error           { return saveJSON("config.json", c) }
-func LoadActions() map[string]any      { m, _ := loadJSON("actions.json"); return m }
+func LoadConfig() (Config, error)        { return loadJSON("config.json") }
+func (c Config) Save() error             { return saveJSON("config.json", c) }
+func LoadActions() map[string]any        { m, _ := loadJSON("actions.json"); return m }
 func SaveActions(m map[string]any) error { return saveJSON("actions.json", m) }
 
 func (c Config) Keys() map[string]any {
@@ -145,6 +145,44 @@ func DescribeKey(entry any, library map[string]any) string {
 			return "send keys: " + truncate(strings.Join(parts, " "), 26)
 		}
 		return "send keys"
+	}
+	return action
+}
+
+// ShortKey is the map-cell form of DescribeKey: the assignment compressed to
+// one word or two, tight enough to sit under a keycap.
+func ShortKey(entry any) string {
+	m, ok := entry.(map[string]any)
+	if !ok || m == nil {
+		return "—"
+	}
+	if use, ok := m["use"].(string); ok && use != "" {
+		return use
+	}
+	action, _ := m["action"].(string)
+	switch action {
+	case "", "none":
+		return "—"
+	case "tmux":
+		if t, _ := m["target"].(string); t != "" {
+			return "pin"
+		}
+		if idx, ok := m["index"].(float64); ok {
+			return "pane " + itoa(int(idx)+1)
+		}
+		return "pane"
+	case "prompt":
+		if l, _ := m["label"].(string); l != "" {
+			return l
+		}
+		return "prompt"
+	case "command":
+		if l, _ := m["label"].(string); l != "" {
+			return l
+		}
+		return "cmd"
+	case "keys":
+		return "keys"
 	}
 	return action
 }

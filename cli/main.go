@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,14 +24,16 @@ import (
 // ---------------------------------------------------------------- styles
 
 var (
-	purple    = lipgloss.Color("#8B54F7")
-	dimColor  = lipgloss.Color("245")
-	greenCol  = lipgloss.Color("#00C853")
-	orangeCol = lipgloss.Color("#FF6D00")
-	redCol    = lipgloss.Color("#FF5370")
+	purple     = lipgloss.Color("#8B54F7")
+	dimColor   = lipgloss.Color("245")
+	mutedColor = lipgloss.Color("236")
+	greenCol   = lipgloss.Color("#00C853")
+	orangeCol  = lipgloss.Color("#FF6D00")
+	redCol     = lipgloss.Color("#FF5370")
 
 	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(purple)
 	dimStyle    = lipgloss.NewStyle().Foreground(dimColor)
+	mutedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
 	selStyle    = lipgloss.NewStyle().Bold(true)
 	cursorStyle = lipgloss.NewStyle().Foreground(purple).Bold(true)
 	flashStyle  = lipgloss.NewStyle().Foreground(greenCol)
@@ -267,6 +270,89 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	// The palette is a 2D grid, so it owns its arrow keys.
+	if s.id == scPalette {
+		grid := paletteGrid()
+		rows := len(grid)
+		row, col := s.cursor/palCols, s.cursor%palCols
+		switch msg.String() {
+		case "ctrl+c":
+			return m, tea.Quit
+		case "q", "esc":
+			m.pop()
+			return m, nil
+		case "left", "h":
+			col = (col + palCols - 1) % palCols
+		case "right", "l":
+			col = (col + 1) % palCols
+		case "up", "k":
+			row = (row + rows - 1) % rows
+		case "down", "j":
+			row = (row + 1) % rows
+		case "x", "#":
+			st, _ := m.cfg.StatusStyle()[s.param].(map[string]any)
+			cur := fmt.Sprintf("%06x", int(st["color"].(float64)))
+			return m.openInput("Hex color (#RRGGBB, RRGGBB, 0xRRGGBB, #RGB):", cur, "hex")
+		case "enter":
+			c := grid[row][col]
+			st, _ := m.cfg.StatusStyle()[s.param].(map[string]any)
+			st["color"] = float64(c)
+			m.cfg.Save()
+			m.pop()
+			return m.previewStatus(s.param, fmt.Sprintf("saved #%06x + previewing", c))
+		}
+		s.cursor = row*palCols + col
+		return m, nil
+	}
+
+	// The keys screen mirrors the physical layout: two rows of caps.
+	if s.id == scKeys {
+		idx := s.cursor
+		row, col := 0, idx
+		if idx >= 6 {
+			row, col = 1, idx-6
+		}
+		rowLen := func(r int) int {
+			if r == 0 {
+				return 6
+			}
+			return 7
+		}
+		switch msg.String() {
+		case "ctrl+c":
+			return m, tea.Quit
+		case "q", "esc":
+			m.pop()
+			return m, nil
+		case "left", "h":
+			col = (col + rowLen(row) - 1) % rowLen(row)
+		case "right", "l":
+			col = (col + 1) % rowLen(row)
+		case "up", "k", "down", "j":
+			row = 1 - row
+			if col >= rowLen(row) {
+				col = rowLen(row) - 1
+			}
+		case "i":
+			return m.startIdentify()
+		case "enter":
+			m.push(screen{id: scKeyEditor, param: KeyNames[idx]})
+			return m, nil
+		default:
+			if n, err := strconv.Atoi(msg.String()); err == nil && n >= 1 && n <= len(KeyNames) {
+				s.cursor = n - 1
+				m.push(screen{id: scKeyEditor, param: KeyNames[n-1]})
+				return m, nil
+			}
+			return m, nil
+		}
+		s.cursor = row*6 + col
+		if row == 1 {
+			s.cursor = 6 + col
+		}
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
@@ -332,18 +418,6 @@ func (m model) itemsFor(s screen) []item {
 			{label: "Test", hint: "fire any key's action from here", value: "test", color: -1},
 			{label: "Quit", value: "quit", color: -1},
 		}
-	case scKeys:
-		lib := m.library()
-		items := make([]item, 0, len(KeyNames)+1)
-		for i, name := range KeyNames {
-			items = append(items, item{
-				label: fmt.Sprintf("%2d · %-6s", i+1, name),
-				hint:  DescribeKey(m.cfg.Keys()[name], lib),
-				value: name, color: -1,
-			})
-		}
-		items = append(items, item{label: "⊙ identify — press a key on the device", value: "__identify", color: -1})
-		return items
 	case scKeyEditor:
 		lib := m.library()
 		items := []item{
@@ -455,22 +529,6 @@ func (m model) itemsFor(s screen) []item {
 			{label: fmt.Sprintf("Brightness: %v", bright), hint: "0-1 multiplier", value: "brightness", color: -1},
 			{label: "▸ Preview on the device", hint: "lights all six keys for 3s", value: "__preview", color: -1},
 		}
-	case scPalette:
-		palette := []struct {
-			name string
-			c    int
-		}{
-			{"codex blue", 0x304FFE}, {"orange", 0xFF6D00}, {"green", 0x00FF4C},
-			{"white", 0xFFFFFF}, {"red", 0xFF0033}, {"purple", 0x8B54F7},
-			{"deep purple", 0x5B1FD3}, {"cyan", 0x00E5FF}, {"pink", 0xFF4081},
-			{"yellow", 0xFFD600}, {"teal", 0x1DE9B6},
-		}
-		items := make([]item, 0, len(palette)+1)
-		for _, p := range palette {
-			items = append(items, item{label: fmt.Sprintf("#%06x", p.c), hint: p.name, value: strconv.Itoa(p.c), color: p.c})
-		}
-		items = append(items, item{label: "Custom hex…", hint: "#RRGGBB, RRGGBB, 0xRRGGBB, or #RGB", value: "__hex", color: -1})
-		return items
 	case scTest:
 		lib := m.library()
 		var items []item
@@ -521,20 +579,6 @@ func (m model) selectItem(s screen, it item) (tea.Model, tea.Cmd) {
 			m.reload()
 			m.push(screen{id: scTest})
 		}
-		return m, nil
-
-	case scKeys:
-		if it.value == "__identify" {
-			ctx, cancel := context.WithCancel(context.Background())
-			m.cancel = cancel
-			m.push(screen{id: scIdentify})
-			api := m.api
-			return m, tea.Batch(m.spin.Tick, func() tea.Msg {
-				k, err := api.NextPress(ctx)
-				return identifyMsg{k, err}
-			})
-		}
-		m.push(screen{id: scKeyEditor, param: it.value})
 		return m, nil
 
 	case scKeyEditor:
@@ -617,7 +661,8 @@ func (m model) selectItem(s screen, it item) (tea.Model, tea.Cmd) {
 		st, _ := m.cfg.StatusStyle()[s.param].(map[string]any)
 		switch it.value {
 		case "color":
-			m.push(screen{id: scPalette, param: s.param})
+			cur := int(st["color"].(float64))
+			m.push(screen{id: scPalette, param: s.param, cursor: paletteCursorFor(cur)})
 			return m, nil
 		case "effect":
 			cur, _ := st["effect"].(string)
@@ -632,19 +677,6 @@ func (m model) selectItem(s screen, it item) (tea.Model, tea.Cmd) {
 			return m.previewStatus(s.param, "previewing on the device…")
 		}
 		return m, nil
-
-	case scPalette:
-		if it.value == "__hex" {
-			st, _ := m.cfg.StatusStyle()[s.param].(map[string]any)
-			cur := fmt.Sprintf("%06x", int(st["color"].(float64)))
-			return m.openInput("Hex color (#RRGGBB, RRGGBB, 0xRRGGBB, #RGB):", cur, "hex")
-		}
-		c, _ := strconv.Atoi(it.value)
-		st, _ := m.cfg.StatusStyle()[s.param].(map[string]any)
-		st["color"] = float64(c)
-		m.cfg.Save()
-		m.pop()
-		return m.previewStatus(s.param, fmt.Sprintf("saved #%06x + previewing", c))
 
 	case scTest:
 		return m.fireTest(it.value)
@@ -724,6 +756,18 @@ func (m model) previewStatus(status, note string) (tea.Model, tea.Cmd) {
 }
 
 func str(v any) string { s, _ := v.(string); return s }
+
+// startIdentify arms the "press a key on the device" flow from the Keys map.
+func (m model) startIdentify() (tea.Model, tea.Cmd) {
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancel = cancel
+	m.push(screen{id: scIdentify})
+	api := m.api
+	return m, tea.Batch(m.spin.Tick, func() tea.Msg {
+		k, err := api.NextPress(ctx)
+		return identifyMsg{k, err}
+	})
+}
 
 func (m model) fireTest(key string) (tea.Model, tea.Cmd) {
 	api := m.api
@@ -862,7 +906,87 @@ func parseHex(s string) (int, bool) {
 	return int(n), true
 }
 
+// ---------------------------------------------------------------- color grid
+
+// The palette screen is a 2D swatch grid: rows are hues (plus a gray ramp on
+// top), columns run pastel → pure → dark. Arrows walk it; the device previews
+// on save. Free hex entry stays one keystroke away for the exact-color cases.
+const palCols = 8
+
+func hsvToRGB(h, s, v float64) int {
+	c := v * s
+	x := c * (1 - math.Abs(math.Mod(h/60, 2)-1))
+	mv := v - c
+	var r, g, b float64
+	switch {
+	case h < 60:
+		r, g, b = c, x, 0
+	case h < 120:
+		r, g, b = x, c, 0
+	case h < 180:
+		r, g, b = 0, c, x
+	case h < 240:
+		r, g, b = 0, x, c
+	case h < 300:
+		r, g, b = x, 0, c
+	default:
+		r, g, b = c, 0, x
+	}
+	ri := int(math.Round((r + mv) * 255))
+	gi := int(math.Round((g + mv) * 255))
+	bi := int(math.Round((b + mv) * 255))
+	return ri<<16 | gi<<8 | bi
+}
+
+func paletteGrid() [][]int {
+	grays := make([]int, palCols)
+	for i := range grays {
+		g := int(math.Round(255 * (1 - 0.95*float64(i)/float64(palCols-1))))
+		grays[i] = g<<16 | g<<8 | g
+	}
+	hues := []float64{0, 25, 50, 95, 150, 180, 210, 240, 275, 315}
+	steps := []struct{ s, v float64 }{
+		{0.35, 1}, {0.55, 1}, {0.8, 1}, {1, 1}, {1, 0.82}, {1, 0.62}, {1, 0.42}, {1, 0.25},
+	}
+	grid := [][]int{grays}
+	for _, h := range hues {
+		row := make([]int, 0, palCols)
+		for _, st := range steps {
+			row = append(row, hsvToRGB(h, st.s, st.v))
+		}
+		grid = append(grid, row)
+	}
+	return grid
+}
+
+// paletteCursorFor seeds the grid cursor on the swatch closest to the status's
+// current color, so editing starts from where the color already is.
+func paletteCursorFor(current int) int {
+	grid := paletteGrid()
+	best, bestDist := 0, math.MaxFloat64
+	cr, cg, cb := float64(current>>16&0xff), float64(current>>8&0xff), float64(current&0xff)
+	for r, row := range grid {
+		for c, col := range row {
+			dr, dg, db := float64(col>>16&0xff)-cr, float64(col>>8&0xff)-cg, float64(col&0xff)-cb
+			if d := dr*dr + dg*dg + db*db; d < bestDist {
+				bestDist, best = d, r*palCols+c
+			}
+		}
+	}
+	return best
+}
+
 // ---------------------------------------------------------------- view
+
+// fitCell trims a label to a keycap's inner width; the ellipsis replaces the
+// last rune instead of overflowing past it, so caps never grow a second line.
+func fitCell(s string, w int) string {
+	r := []rune(s)
+	if len(r) <= w {
+		return s
+	}
+	return string(r[:w-1]) + "…"
+}
 
 func swatch(c int) string {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(fmt.Sprintf("#%06x", c))).Render("██")
@@ -888,25 +1012,46 @@ func capColor(m model, name string) (lipgloss.Color, bool) {
 	return dimColor, false
 }
 
+// agentMuted reports whether an agent-row key was reassigned away from tmux:
+// it no longer mirrors a session, so the map mutes its cell.
+func (m model) agentMuted(name string) bool {
+	entry, _ := m.cfg.Keys()[name].(map[string]any)
+	if entry == nil {
+		return false
+	}
+	if use, _ := entry["use"].(string); use != "" {
+		return true
+	}
+	action, _ := entry["action"].(string)
+	return action != "" && action != "tmux"
+}
+
 // deviceMap draws the Micro as keycaps, each cap filled with its session's
-// live LED color -- the terminal mirror of the physical device.
+// live LED color -- the terminal mirror of the physical device. Agent keys
+// reassigned to non-agent work are muted: no session will ever light them.
 func (m model) deviceMap() string {
 	if m.state == nil {
 		return dimStyle.Render("  (daemon unreachable — start it and this comes alive)")
 	}
 	caps := make([]string, 0, 6)
-	for _, name := range KeyNames[:6] {
-		col, lit := capColor(m, name)
+	numSegs := make([]string, 0, 6)
+	for i, name := range KeyNames[:6] {
 		fill := "  "
 		style := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Padding(0, 1)
-		if lit {
+		numStyle := dimStyle
+		if m.agentMuted(name) {
+			style = style.BorderForeground(mutedColor)
+			fill = mutedStyle.Render("··")
+			numStyle = mutedStyle
+		} else if col, lit := capColor(m, name); lit {
 			fill = lipgloss.NewStyle().Foreground(col).Render("██")
 			style = style.BorderForeground(col)
 		}
 		caps = append(caps, style.Render(fill))
+		numSegs = append(numSegs, numStyle.Render("   "+strconv.Itoa(i+1)+"  "))
 	}
 	capsRow := lipgloss.JoinHorizontal(lipgloss.Top, caps...)
-	nums := "   1     2     3     4     5     6"
+	nums := strings.Join(numSegs, "")
 	lib := m.library()
 	var actions []string
 	for i, name := range KeyNames[6:] {
@@ -931,7 +1076,7 @@ func (m model) deviceMap() string {
 	}
 	extras := cursorStyle.Render("  ◉") + dimStyle.Render(" knob · mode/model   ") +
 		cursorStyle.Render("✛") + dimStyle.Render(" joystick · d-pad/game")
-	return capsRow + "\n" + dimStyle.Render(nums) + "\n\n " + strings.Join(actions, "  ") + "\n" + extras
+	return capsRow + "\n" + nums + "\n\n " + strings.Join(actions, "  ") + "\n" + extras
 }
 
 var barStyle = lipgloss.NewStyle().Background(purple).Foreground(lipgloss.Color("#FFFFFF")).Bold(true).Padding(0, 1)
@@ -959,8 +1104,6 @@ func (m model) header() string {
 
 func (m model) titleFor(s screen) string {
 	switch s.id {
-	case scKeys:
-		return "Keys"
 	case scKeyEditor:
 		return s.param + " — currently: " + DescribeKey(m.cfg.Keys()[s.param], m.library())
 	case scPaneMode:
@@ -977,8 +1120,6 @@ func (m model) titleFor(s screen) string {
 		return "Status colors"
 	case scColorEdit:
 		return s.param
-	case scPalette:
-		return "Pick a color"
 	case scTest:
 		return "Test a key (fires its real action)"
 	}
@@ -1013,6 +1154,62 @@ func (m model) View() string {
 				body.WriteString("  " + dimStyle.Render("…"))
 			}
 		}
+	case scPalette:
+		grid := paletteGrid()
+		body.WriteString(selStyle.Render("Pick a color — "+s.param) + "\n\n")
+		for r, rowColors := range grid {
+			line := " "
+			for c, col := range rowColors {
+				sw := lipgloss.NewStyle().Foreground(lipgloss.Color(fmt.Sprintf("#%06x", col))).Render("██")
+				if r*palCols+c == s.cursor {
+					line += cursorStyle.Render("▐") + sw + cursorStyle.Render("▌")
+				} else {
+					line += " " + sw + " "
+				}
+			}
+			body.WriteString(line + "\n")
+		}
+		hovered := grid[s.cursor/palCols][s.cursor%palCols]
+		body.WriteString("\n  " + swatch(hovered) + fmt.Sprintf(" #%06x", hovered) +
+			dimStyle.Render("   enter saves + previews on the device"))
+
+	case scKeys:
+		body.WriteString(selStyle.Render("Keys — pick a cap to reassign it") + "\n\n")
+		rowsSpec := [][2]int{{0, 6}, {6, 13}}
+		for _, r := range rowsSpec {
+			caps := make([]string, 0, r[1]-r[0])
+			for i := r[0]; i < r[1]; i++ {
+				name := KeyNames[i]
+				muted := i < 6 && m.agentMuted(name)
+				border := lipgloss.Color("240")
+				numSt, lblSt := dimStyle, dimStyle
+				if muted {
+					border = mutedColor
+					numSt, lblSt = mutedStyle, mutedStyle
+				} else if i < 6 {
+					if c, lit := capColor(m, name); lit {
+						border = c
+					}
+				}
+				if i == s.cursor {
+					border = purple
+					numSt = cursorStyle
+					lblSt = selStyle
+				}
+				content := lipgloss.JoinVertical(lipgloss.Center,
+					numSt.Render(strconv.Itoa(i+1)),
+					lblSt.Render(fitCell(ShortKey(m.cfg.Keys()[name]), 6)))
+				caps = append(caps, lipgloss.NewStyle().
+					Border(lipgloss.RoundedBorder()).BorderForeground(border).
+					Padding(0, 1).Width(8).Align(lipgloss.Center).Render(content))
+			}
+			body.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, caps...) + "\n")
+		}
+		sel := KeyNames[s.cursor]
+		body.WriteString("\n  " + selStyle.Render(sel) + "  " +
+			dimStyle.Render(DescribeKey(m.cfg.Keys()[sel], m.library())) + "\n" +
+			dimStyle.Render("  ⊙ i — identify: press the key on the device instead"))
+
 	default:
 		items := m.itemsFor(*s)
 		if title := m.titleFor(*s); title != "" {
@@ -1056,7 +1253,13 @@ func (m model) View() string {
 		}
 		out.WriteString(st.Render("  "+m.flash) + "\n")
 	}
-	out.WriteString(dimStyle.Render("  ↑↓/wheel move · enter select · esc back · q quit") + "\n")
+	help := "  ↑↓/wheel move · enter select · esc back · q quit"
+	if s.id == scPalette {
+		help = "  ←→↑↓ move · enter save · x custom hex · esc back"
+	} else if s.id == scKeys {
+		help = "  ←→↑↓ move · enter reassign · 1-9 jump · i identify · esc back"
+	}
+	out.WriteString(dimStyle.Render(help) + "\n")
 	return out.String()
 }
 

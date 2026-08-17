@@ -195,12 +195,23 @@ function deviceMap(state) {
   const config = readConfig();
   const bySlot = Object.fromEntries(state.slots.map(s => [s.name, s]));
 
+  // Agent keys reassigned to non-agent work are muted -- no session ever
+  // lights them, so they shouldn't read as session cells.
+  const faint = '\x1b[38;5;236m';
+  const agentMuted = name => {
+    const entry = config.keys[name];
+    return !!entry && (entry.use || (entry.action && entry.action !== 'tmux'));
+  };
   const agent = KEY_NAMES.slice(0, 6).map((name, i) => {
+    if (agentMuted(name)) return `${faint}··${C.reset}`;
     const slot = bySlot[name];
     const style = slot && slot.status ? config.statusStyle[slot.status] : null;
     const scale = slot && slot.status === 'empty' ? 0.25 : 1;
     return style ? block(style.color, scale * (style.brightness ?? 1)) : `${C.dim}▒▒${C.reset}`;
   });
+  const agentNums = KEY_NAMES.slice(0, 6)
+    .map((name, i) => (agentMuted(name) ? `${faint}${i + 1}${C.reset}` : `${C.dim}${i + 1}${C.reset}`))
+    .join('  ');
 
   const action = KEY_NAMES.slice(6).map((name, i) => {
     const entry = config.keys[name];
@@ -215,7 +226,7 @@ function deviceMap(state) {
 
   return [
     `   ${agent.join(' ')}    ${knob}   ${joy}`,
-    `   ${C.dim}1  2  3  4  5  6${C.reset}`,
+    `   ${agentNums}`,
     `   ${action.join('  ')}`,
     '',
   ].join('\n');
